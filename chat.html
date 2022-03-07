@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat</title>
+</head>
+<body>
+    <form>
+        <p>Message send</p>
+        <input placeholder="write the message" required>
+        <button type="submit">Ok</button>
+    </form>
+    <p>Message receive</p>
+    <span></span>
+
+
+
+    <script>
+        const form = document.querySelector("form")
+        const input = document.querySelector("input")
+        const span = document.querySelector("span")
+        const socket = new WebSocket("ws://localhost:4000/ws")
+        socket.addEventListener("close",()=>console.log("socket closed"))
+        socket.addEventListener("message",(event)=>{
+            span.innerHTML = span.innerHTML + `\n${event.data}`
+        })
+        form.addEventListener("submit",(event)=>{
+            event.preventDefault()
+            socket.send(input.value)
+            input.value = ""
+        })
+    </script>
+</body>
+</html>

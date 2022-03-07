@@ -1,0 +1,725 @@
+# Transaction
+
+(1) concept
+
+    *UTXO: Unspent Transaction Output model
+        =many crypto are based on this model
+
+    - transaction input: the amount before the transaction
+    - transaction output: the amount after the transaction
+    - coinbased transaction: $10(blockchain) -> $10(miner)
+
+(2) coinbase transaction
+
+    = printing the money from blockchain
+
+    (transaction.go)
+    package blockchain
+
+        import (
+            "time"
+
+            "github.com/skan0779/skan_coin_2022/utilities"
+        )
+
+        type Tx struct {
+            Id        string   `json:"id"`
+            Timestamp int      `json:"timestamp"`
+            Input     []*TxIn  `json:"input"`
+            Output    []*TxOut `json:"output"`
+        }
+
+        type TxIn struct {
+            Owner  string
+            Amount int
+        }
+        type TxOut struct {
+            Owner  string
+            Amount int
+        }
+
+        const (
+            reward int = 10
+        )
+
+        func (t *Tx) getId() {
+            t.Id = utilities.Hash(t)
+        }
+
+        func getTx(address string) *Tx {
+            txIns := []*TxIn{
+                {Owner: "Blockchain", Amount: reward},
+            }
+            txOuts := []*TxOut{
+                {Owner: address, Amount: reward},
+            }
+            transaction := Tx{
+                Id:        "",
+                Timestamp: int(time.Now().Unix()),
+                Input:     txIns,
+                Output:    txOuts,
+            }
+            transaction.getId()
+            return &transaction
+        }
+
+(3) balance
+
+    # blockchain.go
+
+    func (b *blockchain) getTxOuts() []*TxOut {
+        // get the all transaction outputs
+        var tx []*TxOut
+        blocks := b.Blocks()
+        for _, block := range blocks {
+            for _, transaction := range block.Transactions {
+                tx = append(tx, transaction.Output...)
+            }
+        }
+        return tx
+    }
+
+    func (b *blockchain) FilterTxOuts(address string) []*TxOut {
+        // filter the transaction outputs by address
+        var tx []*TxOut
+        outputs := b.getTxOuts()
+        for _, output := range outputs {
+            if output.Owner == address {
+                tx = append(tx, output)
+            }
+        }
+        return tx
+    }
+
+    func (b *blockchain) CalTxOuts(address string) int {
+        var balance int
+        tx := b.FilterTxOuts(address)
+        for _, output := range tx {
+            balance += output.Amount
+        }
+        return balance
+    }
+
+    # rest.go
+
+    func Start(p int) {
+	    handler.HandleFunc("/status", status).Methods("GET")
+	    handler.HandleFunc("/balance/{address}", balance).Methods("GET")
+    }
+
+    func status(rw http.ResponseWriter, r *http.Request) {
+	    data := blockchain.Blockchain()
+	    json.NewEncoder(rw).Encode(data)
+    }
+
+    func balance(rw http.ResponseWriter, r *http.Request) {
+
+        vars := mux.Vars(r)
+        address := vars["address"]
+        total := r.URL.Query().Get("total")
+        switch total {
+        case "true":
+            amount := blockchain.Blockchain().CalTxOuts(address)
+            json.NewEncoder(rw).Encode(balanceResponse{
+                Address: address,
+                Balance: amount,
+            })
+        default:
+            utilities.ErrHandling(json.NewEncoder(rw).Encode(blockchain.Blockchain().FilterTxOuts(address)))
+        }
+    }
+
+(4) mempool
+
+    = mempool(=memory pool): unconfirmed transaction are placed
+        - if the Block add the transaction from Mempool the transaction will be confirmed
+        - miner will add the transaction by mining Blocks
+    
+(5~6) create mempool: create transaction -> add transaction  
+
+    // mempool struct
+    type mempool struct{
+        Txs []*Tx
+    }
+    var Mempool *mempool = &mempool{}
+
+    // making transaction
+    func makeTx(from string, to string, amount int) (*Tx, error) {
+        var txIns []*TxIn
+        var txOuts []*TxOut
+        var total int = 0
+        // check the balance of from address is ok
+        if Blockchain().CalTxOuts(from) < amount {
+            return nil, errors.New("not enough coin")
+        }
+        // create transaction input
+        preTxOuts := Blockchain().FilterTxOuts(from)
+        for _, txOut := range preTxOuts {
+            if total >= amount {
+                break
+            }
+            txIn := &TxIn{Owner: txOut.Owner, Amount: txOut.Amount}
+            txIns = append(txIns, txIn)
+            total += txOut.Amount
+        }
+        // create transaction output
+        change := total - amount
+        if change != 0 {
+            changeTxOut := &TxOut{Owner: from, Amount: change}
+            txOuts = append(txOuts, changeTxOut)
+        }
+        txOut := &TxOut{Owner: to, Amount: amount}
+        txOuts = append(txOuts, txOut)
+        // create transaction
+        tx := &Tx{
+            Id:        "",
+            Timestamp: int(time.Now().Unix()),
+            Input:     txIns,
+            Output:    txOuts,
+        }
+        tx.getId()
+        return tx, nil
+    }
+
+    // adding transaction to mempool
+    func (m *mempool) AddTx(to string, amount int) error {
+        tx, err := makeTx("skan", to, amount)
+        if err != nil {
+            return err
+        }
+        m.Txs = append(m.Txs, tx)
+        return nil
+    }
+
+    // post REST API 
+    func transactions(rw http.ResponseWriter, r *http.Request) {
+        switch r.Method {
+        case "GET":
+            utilities.ErrHandling(json.NewEncoder(rw).Encode(blockchain.Mempool.Txs))
+        case "POST":
+            var response addTxResponse
+            utilities.ErrHandling(json.NewDecoder(r.Body).Decode(&response))
+            err := blockchain.Mempool.AddTx(response.To, response.Amount)
+            if err != nil {
+                json.NewEncoder(rw).Encode(errResponse{"balance not enough"})
+            }
+            rw.WriteHeader(http.StatusCreated)
+        }
+    }
+
+(7) confirm transaction: create transaction for Block -> clear mempool
+
+    // confirming transactions to Block and clear(empty) the mempool
+    func (m *mempool) ConfirmTx() []*Tx {
+        txs := m.Txs
+        coinbase := getTx("skan")
+        txs = append(txs, coinbase)
+        m.Txs = nil
+        return txs
+    }
+
+    func createBlock(height int, preHash string) *Block {
+
+        block := &Block{
+            Height:     height,
+            Hash:       "",
+            PreHash:    preHash,
+            Difficulty: Blockchain().difficulty(),
+            Nonce:      0,
+            -> // Transactions: []*Tx{getTx("skan")},
+
+        }
+        block.mine()
+        -> block.Transactions = Mempool.ConfirmTx()
+        block.save()
+
+        return block
+    }
+
+(8) unspent transaction output
+
+    = don't know which transaction output has already been used for transaction
+    -> transaction input: comes from previous transaction output  
+
+    TxIn struct
+        > Id string
+        > Index int
+        > Owner string
+
+    UTxOut struct
+        > Id string
+        > Index int
+        > Amount int
+
+(9) change FilterTxOuts()
+
+    // filter all the unspent transaction outputs by address
+    func (b *blockchain) FilterTxOuts(address string) []*UTxOut {
+        var uTxOuts []*UTxOut
+        var sTxOuts map[string]bool
+        // sTxOuts := make(map[string]bool)
+
+        for _, block := range b.Blocks() {
+            for _, tx := range block.Transactions {
+                for _, input := range tx.Input {
+                    if input.Owner == address {
+                        // if it is not a coinbase transaction, sending transaction by that address
+                        sTxOuts[input.Id] = true
+                        // mark that transaction id is used
+                    }
+                }
+                for i, output := range tx.Output {
+                    if output.Owner == address {
+                        // if the transaction outputs not been used in other transaction input
+                        _, check := sTxOuts[tx.Id]
+                        if !check {
+                            uTxOuts = append(uTxOuts, &UTxOut{tx.Id, i, output.Amount})
+                        }
+                    }
+                }
+            }
+        }
+        return uTxOuts
+    }
+
+(10) makeTx(from, to, amount)
+
+    // making transaction
+    func makeTx(from string, to string, amount int) (*Tx, error) {
+        if Blockchain().CalTxOuts(from) < amount {
+            return nil, errors.New("balance not enough")
+        }
+        var txOuts []*TxOut
+        var txIns []*TxIn
+        var total int = 0
+        var uTxOuts []*UTxOut = Blockchain().FilterTxOuts(from)
+        // create new transaction's input
+        for _, uTxOut := range uTxOuts {
+            if total > amount {
+                break
+            }
+            txIn := &TxIn{
+                Id:    uTxOut.Id,
+                Index: uTxOut.Index,
+                Owner: from,
+            }
+            txIns = append(txIns, txIn)
+            total += uTxOut.Amount
+        }
+        // create new transaction's output
+        change := total - amount
+        if change != 0 {
+            changeTxOut := &TxOut{Owner: from, Amount: change}
+            txOuts = append(txOuts, changeTxOut)
+        }
+        txOut := &TxOut{Owner: to, Amount: amount}
+        txOuts = append(txOuts, txOut)
+        // create new transaction
+        tx := &Tx{
+            Id:        "",
+            Timestamp: int(time.Now().Unix()),
+            Input:     txIns,
+            Output:    txOuts,
+        }
+        tx.getId()
+        return tx, nil
+    }
+
+(11) checkMempool(): check the UTxOut is whether used or not 
+
+    // checking unspent transaction output(UTxOut) is not on mempool
+    func checkMempool(uTxOut *UTxOut) bool {
+        var check bool = false
+        for _, tx := range Mempool.Txs {
+            for _, input := range tx.Input {
+                if input.Id == uTxOut.Id && input.Index == uTxOut.Index {
+                    check = true
+                }
+            }
+        }
+        return check
+    }
+
+    // lock the UTxOut in FilterTxOuts(address) if checkMempool is in true state
+    for i, output := range tx.Output {
+		if output.Owner == address {
+		    // if the transaction outputs not been used in other transaction input
+			_, check := sTxOuts[tx.Id]
+			if !check {
+				uTxOut := &UTxOut{tx.Id, i, output.Amount}
+				if !checkMempool(uTxOut) {
+					uTxOuts = append(uTxOuts, uTxOut)
+				}
+            }   
+		}
+	}       
+
+(12) refactoring
+
+    # block.go
+    package blockchain
+
+        import (
+            "strings"
+            "time"
+
+            "github.com/skan0779/skan_coin_2022/db"
+            "github.com/skan0779/skan_coin_2022/utilities"
+        )
+
+        type Block struct {
+            Height       int    `json:"height"`
+            Hash         string `json:"hash"`
+            PreHash      string `json:"prevHash,omitempty"`
+            Difficulty   int    `json:"difficulty"`
+            Nonce        int    `json:"nonce"`
+            Timestamp    int    `json:"timestamp"`
+            Transactions []*Tx  `json:"transactions"`
+        }
+
+        // const difficulty int = 2
+        // save to db blocks bucket
+        func (b *Block) save() {
+            db.SaveBlock(b.Hash, utilities.ToByte(b))
+        }
+        func (b *Block) mine() {
+            target := strings.Repeat("0", b.Difficulty)
+            for {
+                b.Timestamp = int(time.Now().Unix())
+                hash := utilities.Hash(b)
+                if strings.HasPrefix(hash, target) {
+                    b.Hash = hash
+                    break
+                } else {
+                    b.Nonce++
+                }
+            }
+        }
+
+        func createBlock(height int, preHash string) *Block {
+
+            block := &Block{
+                Height:     height,
+                Hash:       "",
+                PreHash:    preHash,
+                Difficulty: difficulty(Blockchain()),
+                Nonce:      0,
+                // Transactions: []*Tx{getTx("skan")},
+            }
+            // combination := fmt.Sprint(block.Height) + block.PreHash + block.Data
+            // block.Hash = fmt.Sprintf("%x", sha256.Sum256([]byte(combination)))
+            block.mine()
+            block.Transactions = Mempool.ConfirmTx()
+            block.save()
+
+            return block
+        }
+
+        func FindBlock(hash string) (*Block, error) {
+            data := db.GetBucketBlocks(hash)
+            if data == nil {
+                return nil, ErrNotFound
+            }
+            block := &Block{}
+            utilities.FromByte(block, data)
+            return block, nil
+        }
+
+    # blockchain.go
+    package blockchain
+
+        import (
+            "errors"
+            "sync"
+
+            "github.com/skan0779/skan_coin_2022/db"
+            "github.com/skan0779/skan_coin_2022/utilities"
+        )
+
+        type blockchain struct {
+            Height     int    `json:"height"`
+            PreHash    string `json:"prevHash,omitempty"`
+            Difficulty int    `json:"difficulty"`
+        }
+
+        var b *blockchain
+        var once sync.Once
+        var ErrNotFound = errors.New("not found")
+
+        const (
+            difficultyDefault  int = 2
+            difficultyInterval int = 5
+            blockInterval      int = 2
+        )
+
+        // add the new block
+        func (b *blockchain) AddBlock() {
+            block := createBlock(b.Height+1, b.PreHash)
+            b.Height = block.Height
+            b.PreHash = block.Hash
+            b.Difficulty = block.Difficulty
+            saveBlockchain(b)
+        }
+
+        // get the blocks
+        func Blocks(b *blockchain) []*Block {
+            var blocks []*Block
+            hash := b.PreHash
+            for {
+                block, _ := FindBlock(hash)
+                blocks = append(blocks, block)
+                if block.PreHash != "" {
+                    hash = block.PreHash
+                } else {
+                    break
+                }
+            }
+            return blocks
+        }
+
+        // save to db blockchain bucket
+        func saveBlockchain(b *blockchain) {
+            db.SaveBlockchain(utilities.ToByte(b))
+        }
+
+        // calculate and set the difficulty
+        func difficulty(b *blockchain) int {
+            if b.Height == 0 {
+                return difficultyDefault
+            } else if b.Height%difficultyInterval == 0 {
+                // recalculate difficulty
+                blocks := Blocks(b)
+                lastBlock := blocks[0]
+                lastCalBlock := blocks[difficultyInterval-1]
+                actualTime := (lastBlock.Timestamp - lastCalBlock.Timestamp) / 60
+                expectTime := blockInterval * difficultyInterval
+                if actualTime <= (expectTime - blockInterval) {
+                    return b.Difficulty + 1
+                } else if actualTime >= (expectTime + blockInterval) {
+                    return b.Difficulty - 1
+                }
+                return b.Difficulty
+            } else {
+                return b.Difficulty
+            }
+        }
+
+        // filter all the unspent transaction outputs by address
+        func FilterTxOuts(address string, b *blockchain) []*UTxOut {
+            var uTxOuts []*UTxOut
+            sTxOuts := make(map[string]bool)
+
+            for _, block := range Blocks(b) {
+                for _, tx := range block.Transactions {
+                    for _, input := range tx.Input {
+                        if input.Owner == address {
+                            // if it is not a coinbase transaction, sending transaction by that address
+                            sTxOuts[input.Id] = true
+                            // mark that transaction id is used
+                        }
+                    }
+                    for i, output := range tx.Output {
+                        if output.Owner == address {
+                            // if the transaction outputs not been used in other transaction input
+                            _, check := sTxOuts[tx.Id]
+                            if !check {
+                                uTxOut := &UTxOut{tx.Id, i, output.Amount}
+                                // if the transaction outputs not been used in memory pool input
+                                if !checkMempool(uTxOut) {
+                                    uTxOuts = append(uTxOuts, uTxOut)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return uTxOuts
+        }
+
+        // calculate the balance of the address
+        func CalTxOuts(address string, b *blockchain) int {
+            var balance int
+            tx := FilterTxOuts(address, b)
+            for _, output := range tx {
+                balance += output.Amount
+            }
+            return balance
+        }
+
+        // Main function: start blockchain
+        func Blockchain() *blockchain {
+            once.Do(func() {
+                b = &blockchain{Height: 0}
+                bucketData := db.GetBucketData()
+                if bucketData == nil {
+                    b.AddBlock()
+                } else {
+                    utilities.FromByte(b, bucketData)
+                }
+            })
+            return b
+        }
+
+    # transaction.go
+    package blockchain
+
+        import (
+            "errors"
+            "time"
+
+            "github.com/skan0779/skan_coin_2022/utilities"
+        )
+
+        type Tx struct {
+            Id        string   `json:"id"`
+            Timestamp int      `json:"timestamp"`
+            Input     []*TxIn  `json:"input"`
+            Output    []*TxOut `json:"output"`
+        }
+        type TxIn struct {
+            Id    string `json:"id"`
+            Index int    `json:"index"`
+            Owner string `json:"owner"`
+        }
+        type TxOut struct {
+            Owner  string `json:"owner"`
+            Amount int    `json:"amount"`
+        }
+        type UTxOut struct {
+            Id     string `json:"id"`
+            Index  int    `json:"index"`
+            Amount int    `json:"amount"`
+        }
+        type mempool struct {
+            Txs []*Tx `json:"transactions"`
+        }
+
+        const (
+            reward int = 10
+        )
+
+        var Mempool *mempool = &mempool{}
+
+        func (t *Tx) getId() {
+            t.Id = utilities.Hash(t)
+        }
+
+        // making coinbase transaction (blockchain -> miner)
+        func getTx(address string) *Tx {
+            txIns := []*TxIn{
+                {Id: "", Index: -1, Owner: "Blockchain"},
+            }
+            txOuts := []*TxOut{
+                {Owner: address, Amount: reward},
+            }
+            transaction := Tx{
+                Id:        "",
+                Timestamp: int(time.Now().Unix()),
+                Input:     txIns,
+                Output:    txOuts,
+            }
+            transaction.getId()
+            return &transaction
+        }
+
+        // adding transaction to mempool
+        func (m *mempool) AddTx(to string, amount int) error {
+            tx, err := makeTx("skan", to, amount)
+            if err != nil {
+                return err
+            }
+            m.Txs = append(m.Txs, tx)
+            return nil
+        }
+
+        // confirming transactions to Block and clear(empty) the mempool
+        func (m *mempool) ConfirmTx() []*Tx {
+            txs := m.Txs
+            coinbase := getTx("skan")
+            txs = append(txs, coinbase)
+            m.Txs = nil
+            return txs
+        }
+
+        // making transaction
+        func makeTx(from string, to string, amount int) (*Tx, error) {
+            if CalTxOuts(from, Blockchain()) < amount {
+                return nil, errors.New("balance not enough")
+            }
+            var txOuts []*TxOut
+            var txIns []*TxIn
+            var total int = 0
+            var uTxOuts []*UTxOut = FilterTxOuts(from, Blockchain())
+            // create new transaction's input
+            for _, uTxOut := range uTxOuts {
+                if total >= amount {
+                    break
+                }
+                txIn := &TxIn{
+                    Id:    uTxOut.Id,
+                    Index: uTxOut.Index,
+                    Owner: from,
+                }
+                txIns = append(txIns, txIn)
+                total += uTxOut.Amount
+            }
+            // create new transaction's output
+            change := total - amount
+            if change != 0 {
+                changeTxOut := &TxOut{Owner: from, Amount: change}
+                txOuts = append(txOuts, changeTxOut)
+            }
+            txOut := &TxOut{Owner: to, Amount: amount}
+            txOuts = append(txOuts, txOut)
+            // create new transaction
+            tx := &Tx{
+                Id:        "",
+                Timestamp: int(time.Now().Unix()),
+                Input:     txIns,
+                Output:    txOuts,
+            }
+            tx.getId()
+            return tx, nil
+        }
+
+        // checking unspent transaction output(UTxOut) is not on mempool
+        func checkMempool(uTxOut *UTxOut) bool {
+            for _, tx := range Mempool.Txs {
+                for _, input := range tx.Input {
+                    if input.Id == uTxOut.Id && input.Index == uTxOut.Index {
+                        return true
+                    }
+                }
+            }
+            return false
+        }    
+
+(13) deadlock
+
+    func Blockchain() *blockchain {
+        once.Do(func() {
+            b = &blockchain{Height: 0}
+            bucketData := db.GetBucketData()
+            if bucketData == nil {
+                b.AddBlock()
+            } else {
+                utilities.FromByte(b, bucketData)
+            }
+        })
+        return b
+    }
+
+    func createBlock(height int, preHash string, difficulty int) *Block {
+        block := &Block{
+            Height:     height,
+            Hash:       "",
+            PreHash:    preHash,
+            Difficulty: difficulty,
+            Nonce:      0,
+        }
+        block.mine()
+        block.Transactions = Mempool.ConfirmTx()
+        block.save()
+        return block
+    }
+

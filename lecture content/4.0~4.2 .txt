@@ -1,0 +1,48 @@
+# simple blockchain (1)
+
+package main
+
+    import (
+        "crypto/sha256"
+        "fmt"
+    )
+
+    type block struct {
+        hash    string
+        preHash string
+        data    string
+    }
+
+    type blockchain struct {
+        blocks []block
+    }
+
+    func main() {
+        chain := blockchain{}
+        chain.addBlock("genesisBlock")
+        chain.addBlock("secondBlock")
+        chain.addBlock("thirdBlock")
+        chain.printBlock()
+    }
+
+    func (b *blockchain) getLastBlockHash() string {
+        if len(b.blocks) > 0 {
+            return b.blocks[len(b.blocks)-1].hash
+        }
+        return ""
+    }
+    func (b *blockchain) addBlock(data string) {
+        newBlock := block{"", b.getLastBlockHash(), data}
+        hash := sha256.Sum256([]byte(newBlock.data + newBlock.preHash))
+        newBlock.hash = fmt.Sprintf("%x", hash)
+        b.blocks = append(b.blocks, newBlock)
+    }
+
+    func (b *blockchain) printBlock() {
+        for _, block := range b.blocks {
+            fmt.Printf("data: %s\n", block.data)
+            fmt.Printf("hash: %s\n", block.hash)
+            fmt.Printf("preHash: %s\n", block.preHash)
+        }
+    }
+

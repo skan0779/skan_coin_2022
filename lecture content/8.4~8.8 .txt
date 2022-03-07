@@ -1,0 +1,454 @@
+# Full ver. of CH.8
+
+(block.go)
+package blockchain
+
+    import (
+        "crypto/sha256"
+        "fmt"
+
+        "github.com/skan0779/skan_coin_2022/db"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    type Block struct {
+        Height  int    `json:"height"`
+        Hash    string `json:"hash"`
+        PreHash string `json:"prevHash,omitempty"`
+        Data    string `json:"data"`
+    }
+
+    // save to db blocks bucket
+    func (b *Block) save() {
+        db.SaveBlock(b.Hash, utilities.ToByte(b))
+    }
+
+    func createBlock(height int, preHash string, data string) *Block {
+
+        block := &Block{
+            Height:  height,
+            Hash:    "",
+            PreHash: preHash,
+            Data:    data,
+        }
+        combination := fmt.Sprint(block.Height) + block.PreHash + block.Data
+        block.Hash = fmt.Sprintf("%x", sha256.Sum256([]byte(combination)))
+        block.save()
+
+        return block
+    }
+
+    func FindBlock(hash string) (*Block, error) {
+        data := db.GetBucketBlocks(hash)
+        if data == nil {
+            return nil, ErrNotFound
+        }
+        block := &Block{}
+        utilities.FromByte(block, data)
+        return block, nil
+    }
+
+(blockchain.go)
+package blockchain
+
+    import (
+        "errors"
+        "fmt"
+        "sync"
+
+        "github.com/skan0779/skan_coin_2022/db"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    type blockchain struct {
+        Height  int    `json:"height"`
+        PreHash string `json:"prevHash,omitempty"`
+    }
+
+    var b *blockchain
+    var once sync.Once
+    var ErrNotFound = errors.New("not found")
+
+    func (b *blockchain) AddBlock(data string) {
+        block := createBlock(b.Height+1, b.PreHash, data)
+        b.Height = block.Height
+        b.PreHash = block.Hash
+        b.save()
+    }
+
+    // save to db blockchain bucket
+    func (b *blockchain) save() {
+        db.SaveBlockchain(utilities.ToByte(b))
+    }
+
+    // get the blocks
+    func (b *blockchain) Blocks() []*Block {
+        var blocks []*Block
+        hash := b.PreHash
+        for {
+            block, _ := FindBlock(hash)
+            blocks = append(blocks, block)
+            if block.PreHash != "" {
+                hash = block.PreHash
+            } else {
+                break
+            }
+        }
+        return blocks
+    }
+
+    // Main function: start blockchain
+    func Blockchain() *blockchain {
+        // if blockchain is empty in memory
+        if b == nil {
+            once.Do(func() {
+                // start (height:0,prehash:"") blockchain
+                b = &blockchain{0, ""}
+                // get the data from db: bucket(data)
+                bucketData := db.GetBucketData()
+                if bucketData == nil {
+                    // if the bucket(data) is empty, add first block
+                    b.AddBlock("Genesis Block")
+                } else {
+                    // backup from db blockchain bucket
+                    // if the bucket(data) has a data, backup the data
+                    utilities.FromByte(b, bucketData)
+                }
+            })
+        }
+        fmt.Printf("Height:%d | PreHash: %s \n", b.Height, b.PreHash)
+        return b
+    }
+
+(db.go)
+package db
+
+    import (
+        "fmt"
+
+        "github.com/boltdb/bolt"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    const (
+        dbName        = "blockchain.db"
+        bucketBlocks  = "blocks"
+        bucketData    = "data"
+        bucketDataKey = "alignment"
+    )
+
+    var db *bolt.DB
+
+    func DB() *bolt.DB {
+        if db == nil {
+            // 1. init db
+            db2, err := bolt.Open(dbName, 0600, nil)
+            utilities.ErrHandling(err)
+            db = db2
+            // 2. bucket(2) check and create
+            err = db.Update(func(t *bolt.Tx) error {
+                _, err := t.CreateBucketIfNotExists([]byte(bucketBlocks))
+                utilities.ErrHandling(err)
+                _, err = t.CreateBucketIfNotExists([]byte(bucketData))
+                return err
+            })
+            utilities.ErrHandling(err)
+        }
+        return db
+    }
+
+    func Close() {
+        DB().Close()
+    }
+
+    func SaveBlock(hash string, data []byte) {
+
+        fmt.Printf("Saved Block: %s", hash)
+        err := DB().Update(func(t *bolt.Tx) error {
+            b := t.Bucket([]byte(bucketBlocks))
+            err := b.Put([]byte(hash), data)
+            return err
+        })
+        utilities.ErrHandling(err)
+    }
+
+    func SaveBlockchain(data []byte) {
+
+        err := DB().Update(func(t *bolt.Tx) error {
+            b := t.Bucket([]byte(bucketData))
+            err := b.Put([]byte(bucketDataKey), data)
+            return err
+        })
+        utilities.ErrHandling(err)
+    }
+
+    func GetBucketData() []byte {
+        var data []byte
+        DB().View(func(t *bolt.Tx) error {
+            b := t.Bucket([]byte(bucketData))
+            data = b.Get([]byte(bucketDataKey))
+            return nil
+        })
+        return data
+    }
+
+    func GetBucketBlocks(hash string) []byte {
+        var data []byte
+        DB().View(func(t *bolt.Tx) error {
+            b := t.Bucket([]byte(bucketBlocks))
+            data = b.Get([]byte(hash))
+            return nil
+        })
+        return data
+    }
+
+(utilities.go)
+package utilities
+
+    import (
+        "bytes"
+        "encoding/gob"
+        "log"
+    )
+
+    func ErrHandling(err error) {
+        if err != nil {
+            // log.Panic: 런타임 에러를 발생후 프로그램을 종료
+            // log.Fatal: 프로그램을 정상적으로 완전히 종료
+            log.Fatal(err)
+        }
+    }
+
+    // interface{} => any arguements
+    func ToByte(i interface{}) []byte {
+        // create buffer: can read/write bytes
+        var buffer bytes.Buffer
+        // create encoder
+        enc := gob.NewEncoder(&buffer)
+        // encode the data (b= whole block)
+        err := enc.Encode(i)
+        ErrHandling(err)
+
+        return buffer.Bytes()
+    }
+
+    // pointer, data
+    func FromByte(i interface{}, data []byte) {
+        dec := gob.NewDecoder(bytes.NewReader(data))
+        ErrHandling(dec.Decode(i))
+    }
+
+(rest.go)
+package rest
+
+    import (
+        "encoding/json"
+        "fmt"
+        "log"
+        "net/http"
+
+        "github.com/gorilla/mux"
+        "github.com/skan0779/skan_coin_2022/blockchain"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    // var port string = ":4000"
+    var port string
+
+    type url string
+    type url_data struct {
+        URL         url    `json:"url"`
+        Method      string `json:"method"`
+        Description string `json:"description"`
+    }
+    type requestData struct {
+        Message string
+    }
+    type errResponse struct {
+        Message string
+    }
+
+    func (u url_data) String() string {
+        return "URL Description"
+    }
+
+    func (u url) MarshalText() ([]byte, error) {
+        url := fmt.Sprintf("http://localhost%s%s", port, u)
+        return []byte(url), nil
+    }
+
+    func documentation(rw http.ResponseWriter, r *http.Request) {
+
+        data := []url_data{
+            {URL: url("/"), Method: "GET", Description: "look up document"},
+            {URL: url("/blocks"), Method: "GET", Description: "load blocks"},
+            {URL: url("/blocks"), Method: "POST", Description: "add a new block"},
+            {URL: url("/blocks/{hash}"), Method: "GET", Description: "load a block"},
+        }
+        // rw.Header().Add("Content-Type", "application/json")
+        json.NewEncoder(rw).Encode(data)
+    }
+
+    func blocks(rw http.ResponseWriter, r *http.Request) {
+
+        switch r.Method {
+        case "GET":
+            json.NewEncoder(rw).Encode(blockchain.Blockchain().Blocks())
+        case "POST":
+            var data requestData
+            err := json.NewDecoder(r.Body).Decode(&data)
+            utilities.ErrHandling(err)
+            blockchain.Blockchain().AddBlock(data.Message)
+            rw.WriteHeader(http.StatusCreated)
+        }
+    }
+
+    func block(rw http.ResponseWriter, r *http.Request) {
+        // get the value from request body
+        vars := mux.Vars(r)
+        hash := vars["hash"]
+        // find block with height (received value)
+        encoder := json.NewEncoder(rw)
+        block, err2 := blockchain.FindBlock(hash)
+        // error handling: if the finding height is not in range
+        if err2 == blockchain.ErrNotFound {
+            encoder.Encode(errResponse{Message: fmt.Sprint(err2)})
+        } else {
+            encoder.Encode(block)
+        }
+    }
+
+    func jsonMiddleware(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+            rw.Header().Add("Content-Type", "application/json")
+            next.ServeHTTP(rw, r)
+        })
+    }
+
+    // start function with the port code
+    func Start(p int) {
+
+        port = fmt.Sprintf(":%d", p)
+        // handler := http.NewServeMux()
+        handler := mux.NewRouter()
+        handler.Use(jsonMiddleware)
+        handler.HandleFunc("/", documentation).Methods("GET")
+        handler.HandleFunc("/blocks", blocks).Methods("GET", "POST")
+        handler.HandleFunc("/blocks/{hash:[a-f0-9]+}", block).Methods("GET")
+        fmt.Println("Start REST API" + port)
+        log.Fatal(http.ListenAndServe(port, handler))
+    }
+
+(explorer.go)
+package explorer
+
+    import (
+        "fmt"
+        "html/template"
+        "log"
+        "net/http"
+
+        "github.com/skan0779/skan_coin_2022/blockchain"
+    )
+
+    var templates *template.Template
+    var port string
+
+    type homepageData struct {
+        Context  string
+        PageName string
+        Blocks   []*blockchain.Block
+    }
+
+    func homepage(rw http.ResponseWriter, r *http.Request) {
+        // writer
+        // fmt.Fprint(rw, "hello, this is homepage")
+        // rendering template
+        // template, err := template.ParseFiles("templates/index.html")
+        // if err != nil {
+        // 	log.Fatal(err)
+        // }
+
+        data := homepageData{
+            PageName: "Home",
+            Context:  "Welcome to skan coin!",
+            Blocks:   blockchain.Blockchain().Blocks(),
+        }
+        templates.ExecuteTemplate(rw, "home", data)
+    }
+
+    func addpage(rw http.ResponseWriter, r *http.Request) {
+
+        switch r.Method {
+        case "GET":
+            templates.ExecuteTemplate(rw, "add", "")
+        case "POST":
+            r.ParseForm()
+            data := r.Form.Get("addBlockData")
+            blockchain.Blockchain().AddBlock(data)
+            http.Redirect(rw, r, "/", http.StatusPermanentRedirect)
+        }
+    }
+
+    func Start(p int) {
+
+        port = fmt.Sprintf(":%d", p)
+        handler := http.NewServeMux()
+
+        // loading template # ver.1
+        // template.ParseFiles(""): loading only one file
+        // template := template.Must(template.ParseFiles("templates/pages/index.gohtml"))
+
+        // loading template # ver.2
+        templates = template.Must(template.ParseGlob("explorer/templates/pages/*.gohtml"))
+        templates = template.Must(templates.ParseGlob("explorer/templates/components/*.gohtml"))
+
+        // handler function
+        handler.HandleFunc("/", homepage)
+        handler.HandleFunc("/add", addpage)
+
+        // create server-side rendering website
+        fmt.Println("Start Explorer server" + port)
+        log.Fatal(http.ListenAndServe(port, handler))
+    }
+
+(cli.go)
+package cli
+
+    import (
+        "flag"
+        "fmt"
+        "os"
+        "runtime"
+
+        "github.com/skan0779/skan_coin_2022/explorer"
+        "github.com/skan0779/skan_coin_2022/rest"
+    )
+
+    func Start() {
+        if len(os.Args) == 1 {
+            fmt.Printf("Welcome to Skan Coin \n\n")
+            fmt.Printf("Please use the following commands \n\n")
+            fmt.Printf("-mode:	set the server mode between 'rest' and 'html' \n")
+            fmt.Printf("-port:	set the server port number  \n")
+            os.Exit(0)
+        }
+
+        mode := flag.String("mode", "rest", "Set the mode of server | default: rest api")
+        port := flag.Int("port", 4000, "Set the port number of server | default: 4000")
+        flag.Parse()
+        switch *mode {
+        case "html":
+            explorer.Start(*port)
+        case "rest":
+            rest.Start(*port)
+        default:
+            fmt.Printf("Welcome to Skan Coin \n\n")
+            fmt.Printf("Please use the following commands \n\n")
+            fmt.Printf("-mode:	set the server mode between 'rest' and 'html' \n")
+            fmt.Printf("-port:	set the server port number  \n")
+            // run the main()'s defer before the exit
+            runtime.Goexit()
+        }
+    }
+

@@ -1,0 +1,36 @@
+# Bolt DataBase
+# create db: bucket(2)
+
+package db
+
+    import (
+        "github.com/boltdb/bolt"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    const (
+        dbName      = "blockchain.db"
+        bucketBlock = "blocks"
+        bucketData  = "data"
+    )
+
+    var db *bolt.DB
+
+    func DB() *bolt.DB {
+        if db == nil {
+            // 1. init db
+            db2, err := bolt.Open(dbName, 0600, nil)
+            utilities.ErrHandling(err)
+            db = db2
+            // 2. bucket(2) check and create
+            err = db.Update(func(t *bolt.Tx) error {
+                _, err := t.CreateBucketIfNotExists([]byte(bucketBlock))
+                utilities.ErrHandling(err)
+                _, err = t.CreateBucketIfNotExists([]byte(bucketData))
+                return err
+            })
+            utilities.ErrHandling(err)
+        }
+        return db
+    }
+

@@ -1,0 +1,65 @@
+# PoW: proof of work
+
+(1) PoW concept
+
+    difficulty := 3
+    target := strings.Repeat("0", difficulty)
+    nonce := 1
+    for {
+            hash := fmt.Sprintf("%x", sha256.Sum256([]byte("hello"+fmt.Sprint(nonce))))
+            fmt.Printf("Hash: %s | Nonce: %d \n", hash, nonce)
+            if strings.HasPrefix(hash, target) {
+                break
+            } else {
+                nonce++
+            }
+        }
+
+(2) PoW mining
+
+    func (b *Block) mine() {
+        target := strings.Repeat("0", b.Difficulty)
+        for {
+            b.Timestamp = int(time.Now().Unix())
+            hash := utilities.Hash(b)
+            if strings.HasPrefix(hash, target) {
+                b.Hash = hash
+                break
+            } else {
+                b.Nonce++
+            }
+        }
+    }
+
+(3~4) PoW difficulty
+    
+    # utilties: hash function 
+    func Hash(i interface{}) string {
+        // "%v" is the default format
+        data := fmt.Sprintf("%v", i)
+        hash := sha256.Sum256([]byte(data))
+        return fmt.Sprintf("%x", hash)
+    }
+
+    # difficulty function
+    func (b *blockchain) difficulty() int {
+        if b.Height == 0 {
+            return difficultyDefault
+        } else if b.Height%difficultyInterval == 0 {
+            // recalculate difficulty
+            blocks := b.Blocks()
+            lastBlock := blocks[0]
+            lastCalBlock := blocks[difficultyInterval-1]
+            actualTime := (lastBlock.Timestamp - lastCalBlock.Timestamp) / 60
+            expectTime := blockInterval * difficultyInterval
+            if actualTime <= (expectTime - blockInterval) {
+                return b.Difficulty + 1
+            } else if actualTime >= (expectTime + blockInterval) {
+                return b.Difficulty - 1
+            }
+            return b.Difficulty
+        } else {
+            return b.Difficulty
+        }
+    }
+

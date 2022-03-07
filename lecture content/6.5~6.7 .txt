@@ -1,0 +1,100 @@
+# gorilla mux
+# Atoi
+# Error Handling
+
+package rest
+
+    import (
+        "encoding/json"
+        "fmt"
+        "log"
+        "net/http"
+        "strconv"
+
+        "github.com/gorilla/mux"
+        "github.com/skan0779/skan_coin_2022/blockchain"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    // var port string = ":4000"
+    var port string
+
+    type url string
+    type url_data struct {
+        URL         url    `json:"url"`
+        Method      string `json:"method"`
+        Description string `json:"description"`
+    }
+    type requestData struct {
+        Message string
+    }
+    type errResponse struct {
+        Message string
+    }
+
+    func (u url_data) String() string {
+        return "URL Description"
+    }
+
+    func (u url) MarshalText() ([]byte, error) {
+        url := fmt.Sprintf("http://localhost%s%s", port, u)
+        return []byte(url), nil
+    }
+
+    func documentation(rw http.ResponseWriter, r *http.Request) {
+
+        data := []url_data{
+            {URL: url("/"), Method: "GET", Description: "look up document"},
+            {URL: url("/blocks"), Method: "GET", Description: "load blocks"},
+            {URL: url("/blocks"), Method: "POST", Description: "add a new block"},
+            {URL: url("/blocks/{height}"), Method: "GET", Description: "load a block"},
+        }
+        rw.Header().Add("Content-Type", "application/json")
+        json.NewEncoder(rw).Encode(data)
+    }
+
+    func blocks(rw http.ResponseWriter, r *http.Request) {
+
+        switch r.Method {
+        case "GET":
+            rw.Header().Add("Content-Type", "application/json")
+            json.NewEncoder(rw).Encode(blockchain.GetBlockchain().LookBlockchain())
+        case "POST":
+            var data requestData
+            err := json.NewDecoder(r.Body).Decode(&data)
+            utilities.ErrHandling(err)
+            blockchain.GetBlockchain().AddBlock(data.Message)
+            rw.WriteHeader(http.StatusCreated)
+        }
+    }
+
+    func block(rw http.ResponseWriter, r *http.Request) {
+        // get the value from request body
+        vars := mux.Vars(r)
+        height, err := strconv.Atoi(vars["height"])
+        utilities.ErrHandling(err)
+        // find block with height (received value)
+        encoder := json.NewEncoder(rw)
+        block, err2 := blockchain.GetBlockchain().FindBlock(height)
+        // error handling: if the finding height is not in range
+        if err2 == blockchain.ErrNotFound {
+            encoder.Encode(errResponse{Message: fmt.Sprint(err2)})
+        } else {
+            encoder.Encode(block)
+        }
+    }
+
+    // start function with the port code
+    func Start(p int) {
+
+        port = fmt.Sprintf(":%d", p)
+        // handler := http.NewServeMux()
+        handler := mux.NewRouter()
+        handler.HandleFunc("/", documentation).Methods("GET")
+        handler.HandleFunc("/blocks", blocks).Methods("GET", "POST")
+        handler.HandleFunc("/blocks/{height:[0-9]+}", block).Methods("GET")
+
+        fmt.Println("Start Server" + port)
+        log.Fatal(http.ListenAndServe(port, handler))
+    }
+

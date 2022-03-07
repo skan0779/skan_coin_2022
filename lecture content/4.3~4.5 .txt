@@ -1,0 +1,87 @@
+# simple blockchain (2)
+
+package main
+
+    import (
+        "fmt"
+
+        "github.com/skan0779/skan_coin_2022/blockchain"
+    )
+
+    func main() {
+        chain := blockchain.GetBlockchain()
+        chain.AddBlock("second block")
+        chain.AddBlock("third block")
+        chain.AddBlock("fourth block")
+        for _, block := range chain.LookBlockchain() {
+            fmt.Printf("Data: %s\n", block.Data)
+            fmt.Printf("Hash: %s\n", block.Hash)
+            fmt.Printf("PreHash: %s\n", block.PreHash)
+        }
+    }
+
+package blockchain
+
+    import (
+        "crypto/sha256"
+        "fmt"
+        "sync"
+    )
+
+    type block struct {
+        Hash    string
+        PreHash string
+        Data    string
+    }
+
+    type blockchain struct {
+        // *block: blockchain could be very long, so don't want to copy the block
+        blocks []*block
+    }
+
+    // singleton pattern: sharing only one instance of the blockchain
+    var b *blockchain
+    var once sync.Once
+
+    // struct block's receiver function(b *block): in newBlock.calHash() it will bring up actual newBlock(not copy one)
+    func (b *block) calHash() {
+        hash := sha256.Sum256([]byte(b.Data + b.PreHash))
+        b.Hash = fmt.Sprintf("%x", hash)
+    }
+
+    // uppercase function will be exported in other package
+    func (b *blockchain) AddBlock(data string) {
+        b.blocks = append(b.blocks, createBlock(data))
+    }
+
+    // receiver function(in package main): blockchain.LookBlockchain
+    // no receiver function: chain.LookBlockchain (change-> return GetBlockchain().blocks)
+    func (b *blockchain) LookBlockchain() []*block {
+        return b.blocks
+    }
+
+    // getting the existing blockchain
+    func GetBlockchain() *blockchain {
+        if b == nil {
+            once.Do(func() {
+                b = &blockchain{}
+                b.AddBlock("genesis block")
+            })
+        }
+        return b
+    }
+
+    func createBlock(data string) *block {
+        newBlock := block{"", getPreHash(), data}
+        newBlock.calHash()
+        return &newBlock
+    }
+
+    func getPreHash() string {
+        blockNum := len(GetBlockchain().blocks)
+        if blockNum == 0 {
+            return ""
+        }
+        return GetBlockchain().blocks[blockNum-1].Hash
+    }
+

@@ -1,0 +1,35 @@
+# CLI : command line interface
+# Parse command 
+# Flagset
+
+package main
+
+    import (
+        "flag"
+        "fmt"
+        "os"
+    )
+
+    func main() {
+        if len(os.Args) < 2 {
+            fmt.Printf("Welcome to Skan Coin \n\n")
+            fmt.Printf("Please use the following commands \n\n")
+            fmt.Printf("- explorer: 	Start the HTML explorer \n")
+            fmt.Printf("- rest: 		Start the REST API \n")
+            os.Exit(0)
+        }
+
+        rest := flag.NewFlagSet("rest", flag.ExitOnError)
+        port := rest.Int("port", 4000, "Set the port number of server | default: 4000")
+
+        switch os.Args[1] {
+        case "explorer":
+            fmt.Println("- Start the HTML explorer -")
+        case "rest":
+            fmt.Println("- Start the REST API -")
+            rest.Parse(os.Args[2:])
+        default:
+            fmt.Println("Wrong command !")
+            os.Exit(0)
+        }
+    }

@@ -1,0 +1,55 @@
+# encode json
+# create documentation with interface 
+
+package main
+
+    import (
+        "encoding/json"
+        "fmt"
+        "log"
+        "net/http"
+
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    var PORT string = ":4000"
+
+    type URL string
+    type URL_data struct {
+        URL         URL    `json:"url"`
+        Method      string `json:"method"`
+        Description string `json:"description"`
+    }
+
+    // 5. stringer interface in package
+    func (u URL_data) String() string {
+        return "URL Description"
+    }
+
+    // 6. marshaltext interface
+    func (u URL) MarshalText() ([]byte, error) {
+        url := fmt.Sprintf("http://localhost%s%s", PORT, u)
+        return []byte(url), nil
+    }
+
+    func documentation(rw http.ResponseWriter, r *http.Request) {
+        // 3. documentation data setting
+        data := []URL_data{
+            {URL: URL("/"), Method: "GET", Description: "look up document"},
+            {URL: URL("/blocks"), Method: "POST", Description: "add a new block"},
+        }
+        // 4. marshal go data: encode to json -> log.printf("%s",b)
+        b, err := json.Marshal(data)
+        utilities.ErrHandling(err)
+        fmt.Fprintf(rw, "%s", b)
+    }
+
+    func main() {
+
+        // 2. documentation url
+        http.HandleFunc("/", documentation)
+
+        // 1. open server
+        fmt.Println("Start Server" + PORT)
+        log.Fatal(http.ListenAndServe(PORT, nil))
+    }

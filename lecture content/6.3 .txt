@@ -1,0 +1,113 @@
+# decode json
+# REST Client extension
+
+package main
+
+    import (
+        "encoding/json"
+        "fmt"
+        "log"
+        "net/http"
+
+        "github.com/skan0779/skan_coin_2022/blockchain"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    var PORT string = ":4000"
+
+    type URL string
+    type URL_data struct {
+        URL         URL    `json:"url"`
+        Method      string `json:"method"`
+        Description string `json:"description"`
+    }
+    type RequestData struct {
+        Message string
+    }
+
+    // 5. stringer interface in package
+    func (u URL_data) String() string {
+        return "URL Description"
+    }
+
+    // 6. marshaltext interface
+    func (u URL) MarshalText() ([]byte, error) {
+        url := fmt.Sprintf("http://localhost%s%s", PORT, u)
+        return []byte(url), nil
+    }
+
+    func documentation(rw http.ResponseWriter, r *http.Request) {
+        // 3. documentation data setting
+        data := []URL_data{
+            {URL: URL("/"), Method: "GET", Description: "look up document"},
+            {URL: URL("/blocks"), Method: "GET", Description: "load a blocks"},
+            {URL: URL("/blocks"), Method: "POST", Description: "add a new block"},
+        }
+        // 4. marshal go data: encode to json
+        // b, err := json.Marshal(data)
+        // utilities.ErrHandling(err)
+        // fmt.Fprintf(rw, "%s", b)
+        rw.Header().Add("Content-Type", "application/json")
+        json.NewEncoder(rw).Encode(data)
+    }
+
+    func blocks(rw http.ResponseWriter, r *http.Request) {
+        // 8. get/post: rest client download
+        switch r.Method {
+        case "GET":
+            rw.Header().Add("Content-Type", "application/json")
+            json.NewEncoder(rw).Encode(blockchain.GetBlockchain().LookBlockchain())
+        case "POST":
+            var data RequestData
+            err := json.NewDecoder(r.Body).Decode(&data)
+            utilities.ErrHandling(err)
+            blockchain.GetBlockchain().AddBlock(data.Message)
+            rw.WriteHeader(http.StatusCreated)
+        }
+    }
+
+    func main() {
+
+        // 2. encode json: documentation url
+        http.HandleFunc("/", documentation)
+        // 7. decode json: post request
+        http.HandleFunc("/blocks", blocks)
+
+        // 1. open server
+        fmt.Println("Start Server" + PORT)
+        log.Fatal(http.ListenAndServe(PORT, nil))
+    }
+
+package utilities
+
+    import "log"
+
+    func ErrHandling(err error) {
+        if err != nil {
+            // log.Panic: 런타임 에러를 발생후 프로그램을 종료
+            // log.Fatal: 프로그램을 정상적으로 완전히 종료
+            log.Fatal(err)
+        }
+    }
+
+api.http
+
+    Send Request
+
+    http://localhost:4000/
+
+    ###
+    Send Request
+
+    http://localhost:4000/blocks
+
+    ###
+    Send Request
+
+    POST http://localhost:4000/blocks
+    {
+        "message":"block data"
+    }
+
+
+

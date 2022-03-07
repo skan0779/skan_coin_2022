@@ -1,0 +1,228 @@
+# blockchain explorer (1)
+
+package blockchain
+
+    import (
+        "crypto/sha256"
+        "fmt"
+        "sync"
+    )
+
+    type Block struct {
+        Hash    string
+        PreHash string
+        Data    string
+    }
+
+    type blockchain struct {
+        // *Block: blockchain could be very long, so don't want to copy the Block
+        blocks []*Block
+    }
+
+    // singleton pattern: sharing only one instance of the blockchain
+    var b *blockchain
+    var once sync.Once
+
+    // struct Block's receiver function(b *Block): in newBlock.calHash() it will bring up actual newBlock(not copy one)
+    func (b *Block) calHash() {
+        hash := sha256.Sum256([]byte(b.Data + b.PreHash))
+        b.Hash = fmt.Sprintf("%x", hash)
+    }
+
+    // uppercase function will be exported in other package
+    func (b *blockchain) AddBlock(data string) {
+        b.blocks = append(b.blocks, createBlock(data))
+    }
+
+    // receiver function(in package main): blockchain.LookBlockchain
+    // no receiver function: chain.LookBlockchain (change-> return GetBlockchain().blocks)
+    func (b *blockchain) LookBlockchain() []*Block {
+        return b.blocks
+    }
+
+    // getting the existing blockchain
+    func GetBlockchain() *blockchain {
+        if b == nil {
+            once.Do(func() {
+                b = &blockchain{}
+                b.AddBlock("Genesis Block")
+            })
+        }
+        return b
+    }
+
+    func createBlock(data string) *Block {
+        newBlock := Block{"", getPreHash(), data}
+        newBlock.calHash()
+        return &newBlock
+    }
+
+    func getPreHash() string {
+        blockNum := len(GetBlockchain().blocks)
+        if blockNum == 0 {
+            return ""
+        }
+        return GetBlockchain().blocks[blockNum-1].Hash
+    }
+
+package main
+
+    import (
+        "fmt"
+        "html/template"
+        "log"
+        "net/http"
+
+        "github.com/skan0779/skan_coin_2022/blockchain"
+    )
+
+    type homepageData struct {
+        Context  string
+        PageName string
+        Blocks   []*blockchain.Block
+    }
+
+    const (
+        port string = ":4000"
+    )
+
+    var templates *template.Template
+
+    func homepage(rw http.ResponseWriter, r *http.Request) {
+        // writer
+        // fmt.Fprint(rw, "hello, this is homepage")
+        // rendering template
+        // template, err := template.ParseFiles("templates/index.html")
+        // if err != nil {
+        // 	log.Fatal(err)
+        // }
+
+        data := homepageData{
+            PageName: "Home",
+            Context:  "hi, skan!",
+            Blocks:   blockchain.GetBlockchain().LookBlockchain(),
+        }
+        templates.ExecuteTemplate(rw, "home", data)
+    }
+
+    func addpage(rw http.ResponseWriter, r *http.Request) {
+
+        switch r.Method {
+        case "GET":
+            templates.ExecuteTemplate(rw, "add", "")
+        case "POST":
+            r.ParseForm()
+            data := r.Form.Get("addBlockData")
+            blockchain.GetBlockchain().AddBlock(data)
+            http.Redirect(rw, r, "/", http.StatusPermanentRedirect)
+        }
+    }
+
+    func main() {
+
+        // loading template # ver.1
+        // template := template.Must(template.ParseFiles("templates/pages/index.gohtml"))
+
+        // loading template # ver.2
+        templates = template.Must(template.ParseGlob("templates/pages/*.gohtml"))
+        templates = template.Must(templates.ParseGlob("templates/components/*.gohtml"))
+
+        // handler function
+        http.HandleFunc("/", homepage)
+        http.HandleFunc("/add", addpage)
+
+        // create server-side rendering website
+        fmt.Println("start local server: 4000")
+        log.Fatal(http.ListenAndServe(port, nil))
+
+    }
+
+templates
+
+    1) pages
+
+        -home.gohtml
+
+            {{define "home"}}
+            <!DOCTYPE html>
+            <html lang="en">
+            {{template "head" .PageName}}
+            <body>
+                {{template "header" .Context}}
+                <main>
+                    {{range .Blocks}}
+                        {{template "block" .}}        
+                    {{end}}
+                </main>
+                {{template "footer"}}
+            </body>
+            </html>
+            {{end}}
+
+        -add.gohtml
+
+            {{define "add"}}
+            <!DOCTYPE html>
+            <html lang="en">
+            {{template "head"}}
+            <body>
+                {{template "header"}}
+                <main>
+                    <form method="post">
+                        <input type="text" name="addBlockData" placeholder="input your data for new block" required/>
+                        <button>Add Block</button>
+                    </form>
+                </main>
+                {{template "footer"}}
+            </body>
+            </html>
+            {{end}}
+
+    2) components
+
+        -head.gohtml
+
+            {{define "head"}}
+            <head>
+                <meta charset="UTF-8">
+                <meta http-equiv="X-UA-Compatible" content="IE=edge">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>{{.}} | Skan Coin</title>
+            </head>
+            {{end}}
+
+        -header.gohtml
+
+            {{define "header"}}
+            <header>
+                <nav>
+                    <a href="/">Skan Coin</a>
+                    <a href="/">Home</a>
+                    <a href="/add">Add</a>
+                </nav>
+                <h1>{{.}}</h1>
+            </header>
+            {{end}}        
+
+        -footer.gohtml
+
+            {{define "footer"}}
+            <footer>
+                <copyright>@2022~2099 skan_jung. All rights reserved.</copyright>
+            </footer>
+            {{end}}
+
+        -block.gohtml
+
+            {{define "block"}}
+            <div>
+                <ul>
+                    <li>{{.Data}}</li>
+                    <li>{{.Hash}}</li>
+                    {{if .PreHash}}
+                        <li>{{.PreHash}}</li>
+                    {{end}}
+                </ul>
+            <div>   
+            {{end}}
+

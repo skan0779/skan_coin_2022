@@ -1,0 +1,1042 @@
+# P2P 
+
+(0) Intro
+    
+    # p2p: peer to peer network
+    # websoket: realtime
+    # channel -> race condition -> mutexes
+
+    * current: if I down the server, the whole network will be offline
+        -> future: many nodes are running same software
+        -> if one node is down, blockchain is still on 
+            -> broadcasting node
+            -> revceiving broadcast node  
+    
+(1~4) Channel
+
+    1. basic: blocking operation
+        * channel 생성
+        * channel 연결
+        * channel 설정: 
+            - sending-only: chan<- 
+            - receiving-only: <-chan 
+        func count(c chan<- int) {
+            for i := range [10]int{} {
+                c <- i
+                time.Sleep(1 * time.Second)
+            }
+            close(c)
+        }
+
+        func main() {
+            c := make(chan int)
+            go count(c)
+            for {
+                a, ok := <-c
+                if !ok {
+                    fmt.Println("channel closed")
+                    break
+                }
+                fmt.Println(a)
+            }
+        }
+
+    2. buffered, unbuffered channel
+        * default = unbuffered channel
+            > sending to channel: ex) c <- i
+            > the code is blocked before receive: ex) a := <-c
+            > ex) ->[1]<- 
+        * buffered channel
+            > make a space before the code block: ex) ->[1,2,3,4,5]<-
+            > c := make(chan int, 5)
+
+(5~7) WebSocket
+
+    1. add rest api 
+        /ws, "GET", upgrade to websocket
+
+    2. loggerMiddleware
+        func loggerMiddleware(next http.Handler) http.Handler {
+            return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+                fmt.Printf("%s", r.URL.Path)
+                next.ServeHTTP(rw, r)
+            })
+        }
+
+    3. Start()
+        handler.Use(jsonMiddleware, loggerMiddleware)
+        handler.HandleFunc("/ws", p2p.Upgrade).Methods("GET")
+
+    4. Upgrader
+        var upgrader = websocket.Upgrader{}
+
+    5. Upgrade(rw,r)
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            _, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+        }
+
+    6. checkorigin: 접근허용
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return true
+            }
+            _, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+        }
+
+    7. HTML
+        <body>
+            <script>
+                const socket = new WebSocket("ws://localhost:4000/ws")
+            </script>
+        </body>
+
+    8. ReadMessage
+        # receiving one message
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return true
+            }
+            conn, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+            _, p, err := conn.ReadMessage()
+            utilities.ErrHandling(err)
+            fmt.Printf("%s", p)
+        }
+
+        # html
+        <body>
+            <script>
+                const socket = new WebSocket("ws://localhost:4000/ws")
+                socket.addEventListener("close",()=>console.log("socket closed"))
+                setTimeout(()=>{
+                    socket.send("hi skan")
+                },5000)
+            </script>
+        </body>
+
+        # receiving all message
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return true
+            }
+            conn, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+            for {
+                _, p, err := conn.ReadMessage()
+                utilities.ErrHandling(err)
+                fmt.Printf("%s\n", p)
+            }	
+        }
+
+    9. WriteMessage 
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return true
+            }
+            conn, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+            for {
+                _, p, err := conn.ReadMessage()
+                if err != nil {
+                    break
+                }
+                fmt.Printf("server received: %s\n", p)
+                time.Sleep(2 * time.Second)
+                message := fmt.Sprintf("I'm also : %s\n", p)
+                err = conn.WriteMessage(websocket.TextMessage, []byte(message))
+                utilities.ErrHandling(err)
+            }
+        }
+
+        <script>
+                const form = document.querySelector("form")
+                const input = document.querySelector("input")
+                const span = document.querySelector("span")
+                const socket = new WebSocket("ws://localhost:4000/ws")
+                socket.addEventListener("close",()=>console.log("socket closed"))
+                socket.addEventListener("message",(event)=>{
+                    span.innerHTML = span.innerHTML + `\n${event.data}`
+                })
+                form.addEventListener("submit",(event)=>{
+                    event.preventDefault()
+                    socket.send(input.value)
+                    input.value = ""
+                })
+        </script>
+
+(8~12) P2P
+
+    1. connection
+        # simple ver.
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return true
+            }
+            conn, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+            conns = append(conns, conn)
+            for {
+                _, p, err := conn.ReadMessage()
+                if err != nil {
+                    break
+                }
+                for _, aConn := range conns {
+                    if aConn != conn {
+                        aConn.WriteMessage(websocket.TextMessage, p)
+                    }
+                }
+            }
+        }
+
+    2. connection2
+        # ConnNode()'s request를 받으면, upgrade 해줌
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return true
+            }
+            // conn: port:4000과 연결 통로
+            conn, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+        }
+
+        # port:4000 request upgrade to port:3000
+        func ConnNode(address string, port string) {
+            // creating new connection: nil(request) -> cookie/token 으로 인증절차 가능
+            // conn: port:3000과 연결 통로
+            conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://%s:%s/ws", address, port), nil)
+            utilities.ErrHandling(err)
+        }        
+
+    3. Peers
+        var Peers map[string]*peer = make(map[string]*peer)
+
+        type peer struct {
+            conn *websocket.Conn
+        }
+
+        func startPeer(conn *websocket.Conn, address string, port string) *peer {
+            p := &peer{conn}
+            key := fmt.Sprintf("%s:%s", address, port)
+            Peers[key] = p
+            return p
+        }
+
+        func ConnNode(address string, port string) {
+            url := fmt.Sprintf("ws://%s:%s/ws", address, port)
+            conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+            utilities.ErrHandling(err)
+            startPeer(conn, address, port)
+        }
+
+    4. openPort
+        func connect(rw http.ResponseWriter, r *http.Request) {
+            switch r.Method {
+            case "GET":
+                json.NewEncoder(rw).Encode(p2p.Peers)
+            case "POST":
+                var res *connectResponse
+                json.NewDecoder(r.Body).Decode(&res)
+                p2p.ConnNode(res.Address, res.Port, port)
+                rw.WriteHeader(http.StatusOK)
+            }
+        }        
+
+        func ConnNode(address string, port string, openPort string) {
+            url := fmt.Sprintf("ws://%s:%s/ws?openPort=%s", address, port, openPort)
+            conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+            utilities.ErrHandling(err)
+            startPeer(conn, address, port)
+        }
+
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return true
+            }
+            conn, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+            addr := strings.Split(r.RemoteAddr, ":")
+            openPort := r.URL.Query().Get("openPort")
+            startPeer(conn, addr[0], openPort)
+        }
+
+    5. recap
+        func Spliter(s string, sep string, i int) string {
+            word := strings.Split(s, sep)
+            if len(word)-1 < i {
+                return ""
+            }
+            return word[i]
+        }
+
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            address := utilities.Spliter(r.RemoteAddr, ":", 0)
+            openPort := r.URL.Query().Get("openPort")
+
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return address != "" && openPort != ""
+            }
+
+            conn, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+            startPeer(conn, address, openPort)
+        }
+
+        1) ConnNode() -> :4000
+        2) :4000 -> Upgrade() -> :3000
+        
+(13) Read Peer
+
+    # read setting
+        func (p *peer) read() {
+            for {
+                _, message, err := p.conn.ReadMessage()
+                if err != nil {
+                    break
+                }
+                fmt.Printf("%s", message)
+            }
+        }
+
+        func startPeer(conn *websocket.Conn, address string, port string) *peer {
+            p := &peer{conn}
+            key := fmt.Sprintf("%s:%s", address, port)
+            Peers[key] = p
+            go p.read()
+            return p
+        }
+
+    # write setting
+        func ConnNode(address string, port string, openPort string) {
+            url := fmt.Sprintf("ws://%s:%s/ws?openPort=%s", address, port, openPort[1:])
+            conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+            utilities.ErrHandling(err)
+            startPeer(conn, address, port)
+
+            time.Sleep(10 * time.Second)
+            conn.WriteMessage(websocket.TextMessage, []byte("Hi :3000, I'm :4000 !"))
+        }
+
+        func Upgrade(rw http.ResponseWriter, r *http.Request) {
+            address := utilities.Spliter(r.RemoteAddr, ":", 0)
+            openPort := r.URL.Query().Get("openPort")
+
+            upgrader.CheckOrigin = func(r *http.Request) bool {
+                return address != "" && openPort != ""
+            }
+
+            conn, err := upgrader.Upgrade(rw, r, nil)
+            utilities.ErrHandling(err)
+            startPeer(conn, address, openPort)
+
+            time.Sleep(15 * time.Second)
+            conn.WriteMessage(websocket.TextMessage, []byte("Hi :4000, I'm :3000 !"))
+        }
+
+(14) Write Peer
+
+    type peer struct {
+        conn  *websocket.Conn
+        inbox chan []byte
+    }
+
+    func (p *peer) write() {
+        for {
+            message := <-p.inbox
+            err := p.conn.WriteMessage(websocket.TextMessage, message)
+            if err != nil {
+                break
+            }
+        }
+    }
+
+    func startPeer(conn *websocket.Conn, address string, port string) *peer {
+        p := &peer{
+            conn:  conn,
+            inbox: make(chan []byte),
+        }
+        key := fmt.Sprintf("%s:%s", address, port)
+        Peers[key] = p
+        go p.read()
+        go p.write()
+        return p
+    }
+
+    func ConnNode(address string, port string, openPort string) {
+        url := fmt.Sprintf("ws://%s:%s/ws?openPort=%s", address, port, openPort[1:])
+        conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+        utilities.ErrHandling(err)
+        p := startPeer(conn, address, port)
+
+        time.Sleep(10 * time.Second)
+        p.inbox <- []byte("hi I'm :4000")
+    }
+
+(15) Clean up
+
+    type peer struct {
+        conn    *websocket.Conn
+        inbox   chan []byte
+        key     string
+        address string
+        port    string
+    }    
+
+    func (p *peer) close() {
+        p.conn.Close()
+        delete(Peers, p.key)
+    }
+
+    func (p *peer) read() {
+        defer p.close()
+        for {
+            _, message, err := p.conn.ReadMessage()
+            if err != nil {
+                break
+            }
+            fmt.Printf("%s", message)
+        }
+    }
+
+    func (p *peer) write() {
+        defer p.close()
+        for {
+            message, ok := <-p.inbox
+            if !ok {
+                break
+            }
+            err := p.conn.WriteMessage(websocket.TextMessage, message)
+            if err != nil {
+                break
+            }
+        }
+    }
+
+(16) Data race
+
+    = 둘 이상의 go routine이 application의 동일한 data에 접근할때: one access가 data를 읽고, other access가 data를 수정할때 발생
+    
+    ex) 비행기표가 1개 남았을때
+        고객A, 고객B 가 동시에 카트에 담고 결제를 완료했을떄
+        -> 보통 한 고객이 카트에 담고 결제를 시도중일때 자리를 lock
+    
+    # bbolt
+        -> go get go.etcd.io/bbolt
+
+(17~18) Mutex
+
+    var Peers peers = peers{
+        v: make(map[string]*peer),
+    }
+
+    type peers struct {
+        v map[string]*peer
+        m sync.Mutex
+    }
+
+    func (p *peer) close() {
+        defer Peers.m.Unlock()
+        Peers.m.Lock()
+        p.conn.Close()
+        delete(Peers.v, p.key)
+    }
+
+    func GetPeers(p *peers) []string {
+        defer p.m.Unlock()
+        p.m.Lock()
+        var peers []string
+        for key, _ := range p.v {
+            peers = append(peers, key)
+        }
+        return peers
+    }
+
+(19~) Blockchain
+
+    1. Message
+        type Message struct {
+            sort    MessageType
+            payload []byte
+        }
+
+        type MessageType int
+
+        const (
+            MessageNewestBlock    MessageType = 0
+            MessageBlocksRequest  MessageType = 1
+            MessageBlocksResponse MessageType = 2
+        )
+
+        func (p *peer) read() {
+            defer p.close()
+            for {
+                m := Message{}
+                err := p.conn.ReadJSON(&m)
+                if err != nil {
+                    break
+                }
+                fmt.Print(m.sort)
+            }
+        }
+
+    2. Send Last Block
+        func sendLastBlock(p *peer) {
+            b, err := blockchain.FindBlock(blockchain.Blockchain().PreHash)
+            utilities.ErrHandling(err)
+            m := getMessage(MessageLastBlock, b)
+            p.inbox <- m
+        }
+
+        func getMessage(sort MessageType, payload interface{}) []byte {
+            m := Message{
+                Sort: sort,
+            }
+            p, err := json.Marshal(payload)
+            utilities.ErrHandling(err)
+            m.Payload = p
+            j, err := json.Marshal(m)
+            utilities.ErrHandling(err)
+            return j
+        }        
+
+        func ConnNode(address string, port string, openPort string) {
+            url := fmt.Sprintf("ws://%s:%s/ws?openPort=%s", address, port, openPort[1:])
+            conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+            utilities.ErrHandling(err)
+            p := startPeer(conn, address, port)
+            sendLastBlock(p)
+        }
+
+        func Json(i interface{}) []byte {
+            j, err := json.Marshal(i)
+            ErrHandling(err)
+            return j
+        }
+
+    3. Handle Messages after read
+        func (p *peer) read() {
+            defer p.close()
+            for {
+                m := Message{}
+                err := p.conn.ReadJSON(&m)
+                if err != nil {
+                    break
+                }
+                handleMessage(&m, p)
+            }
+        }
+
+        func handleMessage(m *Message, p *peer) {
+            switch m.Sort {
+            case MessageLastBlock:
+                var data blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                fmt.Println(data)
+            case MessageBlocksRequest:
+                //
+            case MessageBlocksResponse:
+                //
+            }
+        }        
+
+    4. Data race #2
+        func startPeer(conn *websocket.Conn, address string, port string) *peer {
+            defer Peers.m.Unlock()
+            Peers.m.Lock()
+            key := fmt.Sprintf("%s:%s", address, port)
+            p := &peer{
+                conn:    conn,
+                inbox:   make(chan []byte),
+                key:     key,
+                address: address,
+                port:    port,
+            }
+            Peers.v[key] = p
+            go p.read()
+            go p.write()
+            return p
+        }
+
+    5. DB function for port ver.
+        func getDBName() string {
+            port := os.Args[2][6:]
+            return fmt.Sprintf("%s_%s.db", dbName, port)
+        }        
+
+        func DB() *bolt.DB {
+            if db == nil {
+                db2, err := bolt.Open(getDBName(), 0600, nil)
+                utilities.ErrHandling(err)
+                db = db2
+                err = db.Update(func(t *bolt.Tx) error {
+                    _, err := t.CreateBucketIfNotExists([]byte(bucketBlocks))
+                    utilities.ErrHandling(err)
+                    _, err = t.CreateBucketIfNotExists([]byte(bucketData))
+                    return err
+                })
+                utilities.ErrHandling(err)
+            }
+            return db
+        }
+
+    6. Handling Messages by sort
+        func handleMessage(m *Message, p *peer) {
+            switch m.Sort {
+            case MessageLastBlock:
+                var data blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                block, err := blockchain.FindBlock(blockchain.Blockchain().PreHash)
+                utilities.ErrHandling(err)
+                if data.Height >= block.Height {
+                    requestBlocks(p)
+                } else {
+                    sendLastBlock(p)
+                }
+            case MessageBlocksRequest:
+                sendBlocks(p)
+            case MessageBlocksResponse:
+                var data []*blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+            }
+        }
+
+        func requestBlocks(p *peer) {
+            m := getMessage(MessageBlocksRequest, nil)
+            p.inbox <- m
+        }
+
+        func sendBlocks(p *peer) {
+            m := getMessage(MessageBlocksResponse, blockchain.Blocks(blockchain.Blockchain()))
+            p.inbox <- m
+        }
+
+    7. Synchronize DB
+        func handleMessage(m *Message, p *peer) {
+            switch m.Sort {
+            case MessageLastBlock:
+                fmt.Printf("Received Last Block from: %s \n", p.key)
+                var data blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                block, err := blockchain.FindBlock(blockchain.Blockchain().PreHash)
+                utilities.ErrHandling(err)
+                if data.Height >= block.Height {
+                    requestBlocks(p)
+                } else {
+                    sendLastBlock(p)
+                }
+            case MessageBlocksRequest:
+                sendBlocks(p)
+            case MessageBlocksResponse:
+                fmt.Printf("Received Blocks from: %s \n", p.key)
+                var data []*blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                blockchain.Blockchain().Update(data)
+            }
+        }        
+
+        func (b *blockchain) Update(blocks []*Block) {
+            b.Difficulty = blocks[0].Difficulty
+            b.Height = len(blocks)
+            b.PreHash = blocks[0].Hash
+            saveBlockchain(b)
+            db.UpdateBucketBlocks()
+            for _, block := range blocks {
+                saveBlock(block)
+            }
+        }
+
+        func UpdateBucketBlocks() {
+            DB().Update(func(t *bolt.Tx) error {
+                err := t.DeleteBucket([]byte(bucketBlocks))
+                utilities.ErrHandling(err)
+                _, err = t.CreateBucket([]byte(bucketBlocks))
+                utilities.ErrHandling(err)
+                return nil
+            })
+        }
+
+    8. Data race #3
+        type blockchain struct {
+            Height     int    `json:"height"`
+            PreHash    string `json:"prevHash,omitempty"`
+            Difficulty int    `json:"difficulty"`
+            m          sync.Mutex
+        }
+
+        func (b *blockchain) Update(blocks []*Block) {
+            defer b.m.Unlock()
+            b.m.Lock()
+            b.Difficulty = blocks[0].Difficulty
+            b.Height = len(blocks)
+            b.PreHash = blocks[0].Hash
+            saveBlockchain(b)
+            db.UpdateBucketBlocks()
+            for _, block := range blocks {
+                saveBlock(block)
+            }
+        }
+
+        func Blocks(b *blockchain) []*Block {
+            defer b.m.Unlock()
+            b.m.Lock()
+            var blocks []*Block
+            hash := b.PreHash
+            for {
+                block, _ := FindBlock(hash)
+                blocks = append(blocks, block)
+                if block.PreHash != "" {
+                    hash = block.PreHash
+                } else {
+                    break
+                }
+            }
+            return blocks
+        }
+
+        func status(rw http.ResponseWriter, r *http.Request) {
+            blockchain.GetStatus(blockchain.Blockchain(), rw)
+        }
+
+        func GetStatus(b *blockchain, rw http.ResponseWriter) {
+            defer b.m.Unlock()
+            b.m.Lock()
+            err := json.NewEncoder(rw).Encode(b)
+            utilities.ErrHandling(err)
+        }
+
+    9. Broadcasting Block
+        # Sender View
+        func (b *blockchain) AddBlock() *Block {
+            block := createBlock(b.Height+1, b.PreHash, difficulty(b))
+            b.Height = block.Height
+            b.PreHash = block.Hash
+            b.Difficulty = block.Difficulty
+            saveBlockchain(b)
+            return block
+        }                
+
+        func blocks(rw http.ResponseWriter, r *http.Request) {
+            switch r.Method {
+            case "GET":
+                json.NewEncoder(rw).Encode(blockchain.Blocks(blockchain.Blockchain()))
+            case "POST":
+                block := blockchain.Blockchain().AddBlock()
+                p2p.BroadcastBlock(block)
+                rw.WriteHeader(http.StatusCreated)
+            }
+        }
+
+        func BroadcastBlock(b *blockchain.Block) {
+            for _, peer := range Peers.v {
+                sendNewBlock(b, peer) 
+            }
+        }
+
+        func sendNewBlock(b *blockchain.Block, p *peer) {
+            fmt.Printf("Send New Block to: %s \n", p.key)
+            m := getMessage(MessageNewBlock, b)
+            p.inbox <- m
+        }
+
+        # Receiver View
+        func handleMessage(m *Message, p *peer) {
+            switch m.Sort {
+            case MessageLastBlock:
+                fmt.Printf("Received Last Block from: %s \n", p.key)
+                var data blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                block, err := blockchain.FindBlock(blockchain.Blockchain().PreHash)
+                utilities.ErrHandling(err)
+                if data.Height >= block.Height {
+                    requestBlocks(p)
+                } else {
+                    sendLastBlock(p)
+                }
+            case MessageBlocksRequest:
+                sendBlocks(p)
+            case MessageBlocksResponse:
+                fmt.Printf("Received Blocks from: %s \n", p.key)
+                var data []*blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                blockchain.Blockchain().Update(data)
+            case MessageNewBlock:
+                fmt.Printf("Received New Block from: %s \n", p.key)
+                var data *blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                blockchain.Blockchain().UpdateBlock(data)
+            }
+        }
+
+        func (b *blockchain) UpdateBlock(block *Block) {
+            defer b.m.Unlock()
+            b.m.Lock()
+            b.Height += 1
+            b.Difficulty = block.Difficulty
+            b.PreHash = block.Hash
+            saveBlockchain(b)
+            saveBlock(block)
+        }
+
+    10. Broadcasting Transaction
+        # Sender View
+        func (m *mempool) AddTx(to string, amount int) (*Tx, error) {
+            tx, err := makeTx(wallet.Wallet().Address, to, amount)
+            if err != nil {
+                return nil, err
+            }
+            m.Txs[tx.Id] = tx
+            return tx, nil
+        }
+
+        func transactions(rw http.ResponseWriter, r *http.Request) {
+            switch r.Method {
+            case "GET":
+                utilities.ErrHandling(json.NewEncoder(rw).Encode(blockchain.Mempool().Txs))
+            case "POST":
+                var response addTxResponse
+                utilities.ErrHandling(json.NewDecoder(r.Body).Decode(&response))
+                tx, err := blockchain.Mempool().AddTx(response.To, response.Amount)
+                if err != nil {
+                    rw.WriteHeader(http.StatusBadRequest)
+                    json.NewEncoder(rw).Encode(errResponse{err.Error()})
+                    return
+                }
+                p2p.BroadcastTx(tx)
+                rw.WriteHeader(http.StatusCreated)
+            }
+        }
+
+        func BroadcastTx(tx *blockchain.Tx) {
+            for _, peer := range Peers.v {
+                sendNewTx(tx, peer)
+            }
+        }
+
+        func sendNewTx(tx *blockchain.Tx, p *peer) {
+            fmt.Printf("Send New Tx to: %s", p.key)
+            m := getMessage(MessageNewTx, tx)
+            p.inbox <- m
+        }
+
+        # Receiver View
+        type mempool struct {
+            Txs map[string]*Tx
+            m   sync.Mutex
+        }
+        var m *mempool
+        var once2 sync.Once
+
+        func Mempool() *mempool {
+            once2.Do(func() {
+                m = &mempool{
+                    Txs: make(map[string]*Tx),
+                }
+            })
+            return m
+        }
+
+        func mempool(rw http.ResponseWriter, r *http.Request) {
+            blockchain.GetMempool(blockchain.Mempool(), rw)
+        }
+
+        func GetMempool(m *mempool, rw http.ResponseWriter) {
+            defer m.m.Unlock()
+            m.m.Lock()
+            err := json.NewEncoder(rw).Encode(m)
+            utilities.ErrHandling(err)
+        }
+
+        func handleMessage(m *Message, p *peer) {
+            switch m.Sort {
+            case MessageLastBlock:
+                fmt.Printf("Received Last Block from: %s \n", p.key)
+                var data blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                block, err := blockchain.FindBlock(blockchain.Blockchain().PreHash)
+                utilities.ErrHandling(err)
+                if data.Height >= block.Height {
+                    requestBlocks(p)
+                } else {
+                    sendLastBlock(p)
+                }
+            case MessageBlocksRequest:
+                sendBlocks(p)
+            case MessageBlocksResponse:
+                fmt.Printf("Received Blocks from: %s \n", p.key)
+                var data []*blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                blockchain.Blockchain().Update(data)
+            case MessageNewBlock:
+                fmt.Printf("Received New Block from: %s \n", p.key)
+                var data *blockchain.Block
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                blockchain.Blockchain().UpdateBlock(data)
+            case MessageNewTx:
+                fmt.Printf("Received New Tx from: %s \n", p.key)
+                var data *blockchain.Tx
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                blockchain.Mempool().UpdateTx(data)
+            }
+        }
+
+        func (m *mempool) UpdateTx(tx *Tx) {
+            defer m.m.Unlock()
+            m.m.Lock()
+            m.Txs[tx.Id] = tx
+        }
+
+    11. Broadcasting Mempool
+        = node가 받은 블록의 transactions에서 mempool중에 있는 tx.Id 는 mempool에서 제거
+        type mempool struct {
+            Txs map[string]*Tx
+            m   sync.Mutex
+        }        
+
+        func Mempool() *mempool {
+            once2.Do(func() {
+                m = &mempool{
+                    Txs: make(map[string]*Tx),
+                }
+            })
+            return m
+        }
+
+        func (m *mempool) AddTx(to string, amount int) (*Tx, error) {
+            tx, err := makeTx(wallet.Wallet().Address, to, amount)
+            if err != nil {
+                return nil, err
+            }
+            m.Txs[tx.Id] = tx
+            return tx, nil
+        }
+
+        func (m *mempool) ConfirmTx() []*Tx {
+            var txs []*Tx
+            coinbase := getTx(wallet.Wallet().Address)
+            for _, tx := range m.Txs {
+                txs = append(txs, tx)
+            }
+            txs = append(txs, coinbase)
+            m.Txs = make(map[string]*Tx)
+            return txs
+        }
+
+        func (m *mempool) UpdateTx(tx *Tx) {
+            defer m.m.Unlock()
+            m.m.Lock()
+            m.Txs[tx.Id] = tx
+        }
+
+        func (b *blockchain) UpdateBlock(block *Block) {
+            defer b.m.Unlock()
+            b.m.Lock()
+            b.Height += 1
+            b.Difficulty = block.Difficulty
+            b.PreHash = block.Hash
+            saveBlockchain(b)
+            saveBlock(block)
+
+            for _, tx := range block.Transactions {
+                _, ok := m.Txs[tx.Id]
+                if ok {
+                    delete(m.Txs, tx.Id)
+                }
+            }
+        }
+
+    12. Broadcasting Node
+        func ConnNode(address string, port string, openPort string, check bool) {
+            fmt.Printf("\n Start %s connect to: %s \n", openPort, port)
+            url := fmt.Sprintf("ws://%s:%s/ws?openPort=%s", address, port, openPort[1:])
+            conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+            utilities.ErrHandling(err)
+            p := startPeer(conn, address, port)
+            if !check {
+                BroadcastNode(p)
+                return
+            }
+            sendLastBlock(p)
+        }
+
+        func BroadcastNode(p *peer) {
+            for key, peer := range Peers.v {
+                if key != p.key {
+                    data := fmt.Sprintf("%s:%s", p.key, peer.port)
+                    sendNewNode(data, peer)
+                }
+            }
+        }        
+
+        func sendNewNode(data string, p *peer) {
+            fmt.Printf("Send New Node to: %s \n", p.key)
+            m := getMessage(MessageNewNode, data)
+            p.inbox <- m
+        }
+
+    13. Final 
+
+        func connect(rw http.ResponseWriter, r *http.Request) {
+            switch r.Method {
+            case "GET":
+                json.NewEncoder(rw).Encode(p2p.GetPeers(&p2p.Peers))
+            case "POST":
+                var res *connectResponse
+                json.NewDecoder(r.Body).Decode(&res)
+                p2p.ConnNode(res.Address, res.Port, port[1:], true)
+                rw.WriteHeader(http.StatusOK)
+            }
+        }        
+
+        func ConnNode(address string, port string, openPort string, check bool) {
+            fmt.Printf("\n Start %s connect to: %s \n", openPort, port)
+            url := fmt.Sprintf("ws://%s:%s/ws?openPort=%s", address, port, openPort)
+            conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+            utilities.ErrHandling(err)
+            p := startPeer(conn, address, port)
+            if check {
+                BroadcastNode(p)
+                return
+            }
+            sendLastBlock(p)
+        }
+
+        func BroadcastNode(p *peer) {
+            for key, peer := range Peers.v {
+                if key != p.key {
+                    data := fmt.Sprintf("%s:%s", p.key, peer.port)
+                    sendNewNode(data, peer)
+                }
+            }
+        }
+
+        func sendNewNode(data string, p *peer) {
+            fmt.Printf("Send New Node to: %s \n", p.key)
+            m := getMessage(MessageNewNode, data)
+            p.inbox <- m
+        }
+
+        func handleMessage(m *Message, p *peer) {
+            switch m.Sort {
+            case MessageNewNode:
+                var data string
+                err := json.Unmarshal(m.Payload, &data)
+                utilities.ErrHandling(err)
+                fmt.Printf("Received New Node from: %s \n", data)
+                d := strings.Split(data, ":")
+                ConnNode(d[0], d[1], d[2], false)
+            }
+        }
+

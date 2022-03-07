@@ -1,0 +1,26 @@
+# middleware
+    = http request | middleware | web Server
+
+package main
+
+    func jsonMiddleware(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+            rw.Header().Add("Content-Type", "application/json")
+            next.ServeHTTP(rw, r)
+        })
+    }
+
+    // start function with the port code
+    func Start(p int) {
+
+        port = fmt.Sprintf(":%d", p)
+        // handler := http.NewServeMux()
+        handler := mux.NewRouter()
+        handler.Use(jsonMiddleware)
+        handler.HandleFunc("/", documentation).Methods("GET")
+        handler.HandleFunc("/blocks", blocks).Methods("GET", "POST")
+        handler.HandleFunc("/blocks/{height:[0-9]+}", block).Methods("GET")
+
+        fmt.Println("Start Server" + port)
+        log.Fatal(http.ListenAndServe(port, handler))
+    }

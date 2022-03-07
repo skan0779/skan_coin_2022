@@ -1,0 +1,190 @@
+# Change blockchain package (1)
+
+- before
+package blockchain
+
+    import (
+        "crypto/sha256"
+        "errors"
+        "fmt"
+        "sync"
+    )
+
+    type Block struct {
+        Height  int    `json:"height"`
+        Hash    string `json:"hash"`
+        PreHash string `json:"prevHash,omitempty"`
+        Data    string `json:"data"`
+    }
+    type blockchain struct {
+        // *Block: blockchain could be very long, so don't want to copy the Block
+        blocks []*Block
+    }
+
+    // singleton pattern: sharing only one instance of the blockchain
+    var b *blockchain
+    var once sync.Once
+    var ErrNotFound = errors.New("not found")
+
+    // struct Block's receiver function(b *Block): in newBlock.calHash() it will bring up actual newBlock(not copy one)
+    func (b *Block) calHash() {
+        hash := sha256.Sum256([]byte(b.Data + b.PreHash))
+        b.Hash = fmt.Sprintf("%x", hash)
+    }
+
+    // uppercase function will be exported in other package
+    func (b *blockchain) AddBlock(data string) {
+        b.blocks = append(b.blocks, createBlock(data))
+    }
+
+    // receiver function(in package main): blockchain.LookBlockchain
+    // no receiver function: chain.LookBlockchain (change-> return GetBlockchain().blocks)
+    func (b *blockchain) LookBlockchain() []*Block {
+        return b.blocks
+    }
+
+    // finding the block
+    func (b *blockchain) FindBlock(height int) (*Block, error) {
+        if height > len(b.blocks) {
+            return nil, ErrNotFound
+        }
+        return b.blocks[height-1], nil
+    }
+
+    // getting the existing blockchain
+    func GetBlockchain() *blockchain {
+        if b == nil {
+            once.Do(func() {
+                b = &blockchain{}
+                b.AddBlock("Genesis Block")
+            })
+        }
+        return b
+    }
+
+    func createBlock(data string) *Block {
+        newBlock := Block{len(GetBlockchain().blocks) + 1, "", getPreHash(), data}
+        newBlock.calHash()
+        return &newBlock
+    }
+
+    func getPreHash() string {
+        blockNum := len(GetBlockchain().blocks)
+        if blockNum == 0 {
+            return ""
+        }
+        return GetBlockchain().blocks[blockNum-1].Hash
+    }
+
+- after
+(block.go)
+package blockchain
+
+    import (
+        "crypto/sha256"
+        "fmt"
+
+        "github.com/skan0779/skan_coin_2022/db"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    type Block struct {
+        Height  int    `json:"height"`
+        Hash    string `json:"hash"`
+        PreHash string `json:"prevHash,omitempty"`
+        Data    string `json:"data"`
+    }
+
+    // save to db blocks bucket
+    func (b *Block) save() {
+        db.SaveBlock(b.Hash, utilities.ToByte(b))
+    }
+
+    func createBlock(height int, preHash string, data string) *Block {
+
+        block := &Block{
+            Height:  height,
+            Hash:    "",
+            PreHash: preHash,
+            Data:    data,
+        }
+        combination := fmt.Sprint(block.Height) + block.PreHash + block.Data
+        block.Hash = fmt.Sprintf("%x", sha256.Sum256([]byte(combination)))
+        block.save()
+
+        return block
+    }
+(blockchain.go)
+package blockchain
+
+    import (
+        "errors"
+        "sync"
+
+        "github.com/skan0779/skan_coin_2022/db"
+        "github.com/skan0779/skan_coin_2022/utilities"
+    )
+
+    type blockchain struct {
+        Height  int    `json:"height"`
+        PreHash string `json:"prevHash,omitempty"`
+    }
+
+    var b *blockchain
+    var once sync.Once
+    var ErrNotFound = errors.New("not found")
+
+    func (b *blockchain) AddBlock(data string) {
+        block := createBlock(b.Height+1, b.PreHash, data)
+        b.Height = block.Height
+        b.PreHash = block.Hash
+        b.save()
+    }
+
+    // save to db blockchain bucket
+    func (b *blockchain) save() {
+        db.SaveBlockchain(utilities.ToByte(b))
+    }
+
+    func Blockchain() *blockchain {
+        if b == nil {
+            once.Do(func() {
+                b = &blockchain{0, ""}
+                b.AddBlock("Genesis Block")
+            })
+        }
+        return b
+    }
+
+package utilities
+
+    import (
+        "bytes"
+        "encoding/gob"
+        "log"
+    )
+
+    func ErrHandling(err error) {
+        if err != nil {
+            // log.Panic: 런타임 에러를 발생후 프로그램을 종료
+            // log.Fatal: 프로그램을 정상적으로 완전히 종료
+            log.Fatal(err)
+        }
+    }
+
+    // interface{} => any arguements
+    func ToByte(i interface{}) []byte {
+        // create buffer: can read/write bytes
+        var buffer bytes.Buffer
+        // create encoder
+        enc := gob.NewEncoder(&buffer)
+        // encode the data (b= whole block)
+        err := enc.Encode(i)
+        ErrHandling(err)
+
+        return buffer.Bytes()
+    }
+
+# db file ignore
+.gitignore
+-> *.db

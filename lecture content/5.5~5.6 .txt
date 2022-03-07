@@ -1,0 +1,10 @@
+# blockchain explorer (2)
+
+1. new folder: explorer
+
+    -templates
+    -new file: explorer.go (package explorer)
+
+2. main.go
+
+    -explorer.Start()

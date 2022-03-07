@@ -1,0 +1,407 @@
+# Wallet
+
+(0) Intro
+
+    Step(3)
+        1. learning: signature,verification with private/public key
+        2. wallet: back-end with persistency
+        3. transaction: signature, verification implement
+
+    Basic(2)
+        1. check A(address) own the transaction output for new transaction's input
+        2. check A(address) approved the new transaction
+
+(1) Private/Public key    
+    
+    # Sign
+        1. "data" -> "hashed data"
+        2. key pair -> "private key", "public key"
+        3. "hased data" + "private key" -> signature
+    
+    # Verify sign
+        4. "hashed data" + "signature" + "public key" -> true/false
+
+(2) Sign Message
+
+    1. create private key
+        privateK, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+        utilities.ErrHandling(err)
+        var message string = "Hi I'm skan"
+        
+    2. hash message to string
+        hashMessage := utilities.Hash(message)
+        
+    3. hash message to byte
+        hashMessageByte, err := hex.DecodeString(hashMessage)
+        utilities.ErrHandling(err)
+        
+    4. sign message
+        r, s, err := ecdsa.Sign(rand.Reader, privateK, hashMessageByte)
+
+(3) Verify signed message
+
+    5. verify message
+        check := ecdsa.Verify(&privateK.PublicKey, hashMessageByte, r, s)
+	    fmt.Println(check)
+
+    # combine r,s
+        signature := append(r.Bytes(), s.Bytes()...)
+	    fmt.Printf("%x", signature)
+
+    # x509: parse private key ( privateKey -> format -> save )
+        key, err := x509.MarshalECPrivateKey(privateK)
+        utilities.ErrHandling(err)
+        fmt.Printf("%x", key)
+
+    hashMessage string = "649758a52094066813ce37f16c75328aab17a946c583728db1b933c3e1343a6d"
+	privateKey  string = "3077020101042016f0923192ea0a8bdead95f145452db1b7c00f59e79c320376bd76ad66c30597a00a06082a8648ce3d030107a14403420004008b6b7d5831104316d3915a1f1fd8cbf971976292c78fdb184010e37a641ac0a1d7e2d88069699fe8196520c44fe449b24e91c95eff65809ebd31290f561138"
+	signature   string = "be38052a70226e1f2f95985b3c7a313a606fac44c64573102005d6395e218d726cc29ab3aaa7c13f5b45e367ff5c08c8b62d72de8048453ed6030b8dc34d2bc0"
+
+(4) Restoring 
+
+    1. restore private key
+        # check privateKey(input) is hexadecimal format (16)
+        privateKeyByte, err := hex.DecodeString(privateKey)
+        utilities.ErrHandling(err)
+
+        privateKeyRestored,err := x509.ParseECPrivateKey(privateKeyByte)
+        utilities.ErrHandling(err)
+
+    2. restore signature
+        signatureByte, err := hex.DecodeString(signature)
+        utilities.ErrHandling(err)
+
+        rByte := signatureByte[:len(signatureByte)/2]
+        sByte := signatureByte[len(signatureByte)/2:]
+
+        # init big.Int{}: *big.Int 초기화
+        var r, s = big.Int{}, big.Int{}
+        r.SetBytes(rByte)
+        s.SetBytes(sByte)
+
+        fmt.PrintIn(r, s)
+
+    3. verify 
+        hashMessageByte, err := hex.DecodeString(hashMessage)
+	    utilities.ErrHandling(err)
+
+        check := ecdsa.Verify(&privateKeyRestored.PublicKey, hashMessageByte, &r, &s)
+        fmt.Println(check)
+    
+    package wallet
+
+        import (
+            "crypto/ecdsa"
+            "crypto/x509"
+            "encoding/hex"
+            "fmt"
+            "math/big"
+
+            "github.com/skan0779/skan_coin_2022/utilities"
+        )
+
+        const (
+            hashMessage string = "649758a52094066813ce37f16c75328aab17a946c583728db1b933c3e1343a6d"
+            privateKey  string = "3077020101042016f0923192ea0a8bdead95f145452db1b7c00f59e79c320376bd76ad66c30597a00a06082a8648ce3d030107a14403420004008b6b7d5831104316d3915a1f1fd8cbf971976292c78fdb184010e37a641ac0a1d7e2d88069699fe8196520c44fe449b24e91c95eff65809ebd31290f561138"
+            signature   string = "be38052a70226e1f2f95985b3c7a313a606fac44c64573102005d6395e218d726cc29ab3aaa7c13f5b45e367ff5c08c8b62d72de8048453ed6030b8dc34d2bc0"
+        )
+
+        func Start() {
+            // check if it is hexadecimal(=16진수) format
+            privateKeyByte, err := hex.DecodeString(privateKey)
+            utilities.ErrHandling(err)
+
+            privateKeyRestored, err := x509.ParseECPrivateKey(privateKeyByte)
+            utilities.ErrHandling(err)
+
+            signatureByte, err := hex.DecodeString(signature)
+            utilities.ErrHandling(err)
+
+            rByte := signatureByte[:len(signatureByte)/2]
+            sByte := signatureByte[len(signatureByte)/2:]
+
+            // init big.Int{}: *big.Int 초기화
+            var r, s = big.Int{}, big.Int{}
+            r.SetBytes(rByte)
+            s.SetBytes(sByte)
+
+            hashMessageByte, err := hex.DecodeString(hashMessage)
+            utilities.ErrHandling(err)
+            check := ecdsa.Verify(&privateKeyRestored.PublicKey, hashMessageByte, &r, &s)
+            fmt.Println(check)
+
+        }
+
+(5) wallet Backend
+
+    1. type fo wallet
+        type wallet struct {
+            privateKey *ecdsa.PrivateKey
+        }
+
+    2. singleton pattern
+        var w *wallet
+
+        func Wallet() *wallet {
+            if w == nil {
+                if checkWallet(){
+                    // yes > restore wallet from file
+                    // no > create private key, save it to file
+                }
+            }
+            return w
+        }
+
+    3. checkWallet
+        func checkWallet() bool{
+	        _,err := os.Stat("skancoin.wallet")
+	        return !os.IsNotExist(err)
+        }       
+
+(6) wallet save
+
+    1. main
+    func Wallet() *wallet {
+        if w == nil {
+            w = &wallet{}
+            if checkWallet() {
+
+            } else {
+                key := createPrivateKey()
+                savePrivateKey(key)
+                w.privateKey = key
+            }
+        }
+        return w
+    }
+
+    2. create private key
+        privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+        utilities.ErrHandling(err)
+        return privateKey
+
+    3. save private key
+        privateKeyByte, err := x509.MarshalECPrivateKey(privateKey)
+        utilities.ErrHandling(err)
+        err = os.WriteFile(walletName, privateKeyByte, 0644)
+        utilities.ErrHandling(err)
+
+(7) wallet restore
+
+    1. restore private key
+        privateKeyByte, err := os.ReadFile(walletName)
+        utilities.ErrHandling(err)
+        privateKey, err := x509.ParseECPrivateKey(privateKeyByte)
+        utilities.ErrHandling(err)
+        return privateKey
+
+(8) wallet address
+
+    1. create address(=public key)
+        address := append(key.X.Bytes(), key.Y.Bytes()...)
+	    return fmt.Sprintf("%x", address)
+
+    2. apply address in transaction.go
+        > AddTx()
+        > ConfirmTx()
+
+    3. sign the payload
+        payloadByte, err := hex.DecodeString(payload)
+        utilities.ErrHandling(err)
+        r, s, err := ecdsa.Sign(rand.Reader, w.privateKey, payloadByte)
+        utilities.ErrHandling(err)
+        signature := append(r.Bytes(), s.Bytes()...)
+        return fmt.Sprintf("%x", signature)
+
+(9) Verify signature
+
+    1. restore signature(r,s), address(x,y) 
+    func restoreBigInt(data string) (*big.Int, *big.Int, error) {
+        dataByte, err := hex.DecodeString(data)
+        if err != nil {
+            return nil, nil, err
+        }
+        // r,s or x,y
+        aByte := dataByte[:len(dataByte)/2]
+        bByte := dataByte[len(dataByte)/2:]
+        a, b := big.Int{}, big.Int{}
+        a.SetBytes(aByte)
+        b.SetBytes(bByte)
+        return &a, &b, nil
+    }
+
+    2. verify 
+    func Verify(signature string, payload string, address string) bool {
+        r, s, err := restoreBigInt(signature)
+        utilities.ErrHandling(err)
+        x, y, err := restoreBigInt(address)
+        utilities.ErrHandling(err)
+        publicKey := ecdsa.PublicKey{
+            Curve: elliptic.P256(),
+            X:     x,
+            Y:     y,
+        }
+        payloadByte, err := hex.DecodeString(payload)
+        utilities.ErrHandling(err)
+        check := ecdsa.Verify(&publicKey, payloadByte, r, s)
+        return check
+    }    
+
+(11) transaction sign
+
+    1. change struct
+        > type TxIn: Owner -> Signature
+        > type TxOut: Owner -> Address
+
+    2. sign transaction
+    func (t *Tx) sign() {
+        for _, txIn := range t.Input {
+            txIn.Signature = wallet.Sign(wallet.Wallet(), t.Id)
+        }
+    }
+
+    2. get all transactions
+    func Transactions(b *blockchain) []*Tx {
+        var txs []*Tx
+        for _, block := range Blocks(b) {
+            txs = append(txs, block.Transactions...)
+        }
+        return txs
+    }
+
+    3. find the transaction
+    func FindTx(b *blockchain, txId string) *Tx {
+        for _, tx := range Transactions(b) {
+            if tx.Id == txId {
+                return tx
+            }
+        }
+        return nil
+    }
+
+(12) transaction verify
+
+    1. verify transaction
+    func verify(tx *Tx) bool {
+        var check bool = true
+        for _, txIn := range tx.Input {
+            transaction := FindTx(Blockchain(), txIn.Id)
+            if transaction == nil {
+                check = false
+                break
+            }
+            address := transaction.Output[txIn.Index].Address
+            check = wallet.Verify(txIn.Signature, tx.Id, address)
+            if !check {
+                break
+            }
+        }
+        return check
+    }
+
+    2. change functions
+    func FilterTxOuts(address string, b *blockchain) []*UTxOut {
+        var uTxOuts []*UTxOut
+        sTxOuts := make(map[string]bool)
+
+        for _, block := range Blocks(b) {
+            for _, tx := range block.Transactions {
+                for _, input := range tx.Input {
+                    // if TxIn is a coinbase transaction: blockchain mining transaction 은 계산 x
+                    if input.Signature == "COINBASE" {
+                        break
+                    }
+                    // if TxIn is p2p transaction: 거래할때 사용한 코인들 채크표시
+                    // mark that transaction id is used
+                    if FindTx(b, input.Id).Output[input.Index].Address == address {
+                        sTxOuts[input.Id] = true
+                    }
+                }
+                for i, output := range tx.Output {
+                    if output.Address == address {
+                        // if the transaction outputs not been used in other transaction input
+                        _, check := sTxOuts[tx.Id]
+                        if !check {
+                            uTxOut := &UTxOut{tx.Id, i, output.Amount}
+                            // if the transaction outputs not been used in memory pool input
+                            if !checkMempool(uTxOut) {
+                                uTxOuts = append(uTxOuts, uTxOut)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return uTxOuts
+    }
+
+    func makeTx(from string, to string, amount int) (*Tx, error) {
+        if CalTxOuts(from, Blockchain()) < amount {
+            return nil, ErrNotEnough
+        }
+        var txOuts []*TxOut
+        var txIns []*TxIn
+        var total int = 0
+        var uTxOuts []*UTxOut = FilterTxOuts(from, Blockchain())
+        // create new transaction's input
+        for _, uTxOut := range uTxOuts {
+            if total >= amount {
+                break
+            }
+            txIn := &TxIn{uTxOut.Id, uTxOut.Index, from}
+            txIns = append(txIns, txIn)
+            total += uTxOut.Amount
+        }
+        // create new transaction's output
+        change := total - amount
+        if change != 0 {
+            changeTxOut := &TxOut{from, change}
+            txOuts = append(txOuts, changeTxOut)
+        }
+        txOut := &TxOut{to, amount}
+        txOuts = append(txOuts, txOut)
+        // create new transaction
+        tx := &Tx{
+            Id:        "",
+            Timestamp: int(time.Now().Unix()),
+            Input:     txIns,
+            Output:    txOuts,
+        }
+        tx.getId()
+        tx.sign()
+        check := verify(tx)
+        if !check {
+            return nil, ErrNotValid
+        }
+        return tx, nil
+    }
+
+(13~14) Final
+
+    1. myWallet(rw,r)
+        address := wallet.Wallet().Address
+        json.NewEncoder(rw).Encode(walletResponse{Address: address})
+
+    # 실수로 다른 address로 송금했을때
+        -> 특정 address에 맞는 public key를 찾거나 만들수 없기떄문에 되찾기 불가능: random creation
+
+    # err들 처리
+        * 순서: rw.WriteHeader(http.Status~) -> json.NewEncoder(rw).Encode(~) 
+    func transactions(rw http.ResponseWriter, r *http.Request) {
+        switch r.Method {
+        case "GET":
+            utilities.ErrHandling(json.NewEncoder(rw).Encode(blockchain.Mempool.Txs))
+        case "POST":
+            var response addTxResponse
+            utilities.ErrHandling(json.NewDecoder(r.Body).Decode(&response))
+            err := blockchain.Mempool.AddTx(response.To, response.Amount)
+            if err != nil {
+                rw.WriteHeader(http.StatusBadRequest)
+                json.NewEncoder(rw).Encode(errResponse{err.Error()})
+                return
+            }
+            rw.WriteHeader(http.StatusCreated)
+        }
+    }
+
+
